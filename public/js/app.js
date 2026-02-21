@@ -27,7 +27,7 @@ if (smokeForm && smokeBtn && smokeStatus) {
   });
 }
 import { renderMessage } from './utils.js';
-import { renderResults, setSelectOptions } from './ui.js';
+import { renderResults, setSelectOptions, getRowState, getStatusLabel } from './ui.js';
 import { loadCodecs, loadDirectories, runAudit } from './audit.js';
 
 // DOM elements
@@ -42,16 +42,39 @@ const videoCodecSelect = document.getElementById('videoCodec');
 const audioCodecSelect = document.getElementById('audioCodec');
 const transcodeBtn = document.getElementById('transcode-btn');
 const selectAllCheckbox = document.getElementById('select-all-checkbox');
+const cancelBtn = document.getElementById('cancel-btn');
+if (cancelBtn) {
+  cancelBtn.addEventListener('click', async () => {
+    cancelBtn.disabled = true;
+    renderMessage(message, 'info', 'Cancelling transcode...');
+    try {
+      const res = await fetch('/api/transcode/cancel', { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Cancel failed.');
+      renderMessage(message, 'success', data.message || 'Transcode cancelled.');
+    } catch (err) {
+      renderMessage(message, 'danger', err.message);
+    } finally {
+      cancelBtn.disabled = false;
+    }
+  });
+}
 
 // Helper to sync codec dropdowns
 async function syncCodecDropdowns() {
   const response = await fetch('/api/options/codecs');
   const data = await response.json();
   if (!response.ok || !data.ok) throw new Error(data.error || 'Unable to load codec options.');
+  // Map for display: hevc (CPU) and hevc (GPU)
+  const videoCodecOptions = data.videoCodecs.map(c => {
+    if (c === 'hevc') return { value: 'hevc', label: 'hevc (CPU)' };
+    if (c === 'hevc_videotoolbox') return { value: 'hevc_videotoolbox', label: 'hevc (GPU)' };
+    return { value: c, label: c };
+  });
   // Prefer GPU codecs by default
   const gpuPreferred = ['hevc_videotoolbox', 'h264_videotoolbox', 'cuda', 'nvenc', 'qsv', 'vaapi'];
-  let defaultVideo = data.videoCodecs.find(c => gpuPreferred.includes(c)) || data.videoCodecs[0] || '';
-  setSelectOptions(videoCodecSelect, data.videoCodecs, defaultVideo);
+  let defaultVideo = videoCodecOptions.find(c => gpuPreferred.includes(c.value))?.value || videoCodecOptions[0]?.value || '';
+  setSelectOptions(videoCodecSelect, videoCodecOptions, defaultVideo);
   setSelectOptions(audioCodecSelect, data.audioCodecs, 'ac3');
 }
 
@@ -87,10 +110,14 @@ window._lastAuditRows = [];
 function setupEnhancements(rows) {
   // Bootstrap tooltips
   if (globalThis.bootstrap) {
+    // Dispose existing tooltips first
     const tooltipNodes = resultsBody.querySelectorAll('[data-bs-toggle="tooltip"]');
-    for (const node of tooltipNodes) {
-      new globalThis.bootstrap.Tooltip(node);
-    }
+    tooltipNodes.forEach(node => {
+      if (node._tooltipInstance) {
+        node._tooltipInstance.dispose();
+      }
+      node._tooltipInstance = new globalThis.bootstrap.Tooltip(node);
+    });
   }
   // Tablesort
   if (globalThis.Tablesort) {
@@ -125,38 +152,24 @@ function renderResultsWithStore(rows, ...args) {
 }
 
 // Use this patched version for audit
-form.removeEventListener('submit', () => {}); // Remove old if present
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   await runAudit(form, runButton, message, resultsBody, (rows) => renderResultsWithStore(rows, resultsBody, () => {}));
 });
 
-// Add a div for ffmpeg output if not present
-let ffmpegOutputDiv = document.getElementById('ffmpeg-output');
-if (!ffmpegOutputDiv) {
-  ffmpegOutputDiv = document.createElement('div');
-  ffmpegOutputDiv.id = 'ffmpeg-output';
-  ffmpegOutputDiv.className = 'mt-3 p-2 bg-dark text-light rounded';
-  ffmpegOutputDiv.style.fontFamily = 'monospace';
-  ffmpegOutputDiv.style.whiteSpace = 'pre-line';
-  document.querySelector('main').appendChild(ffmpegOutputDiv);
-}
+// In transcodeBtn click handler:
+// Replace:
+//   showSpinnerModal('Transcoding, please wait...');
+//   ...
+//   hideSpinnerModal();
+// With nothing (just disable/enable button as before)
 
-function showFfmpegOutput() {
-  ffmpegOutputDiv.textContent = '';
-  const evtSource = new EventSource('/api/transcode/stream');
-  evtSource.onmessage = (event) => {
-    ffmpegOutputDiv.textContent += event.data + '\n';
-    ffmpegOutputDiv.scrollTop = ffmpegOutputDiv.scrollHeight;
-  };
-  evtSource.addEventListener('done', (event) => {
-    ffmpegOutputDiv.textContent += '\n' + event.data + '\n';
-    evtSource.close();
-  });
-  evtSource.onerror = () => {
-    evtSource.close();
-  };
-}
+// In form submit handler:
+// Replace:
+//   showSpinnerModal('Scanning, please wait...');
+//   ...
+//   hideSpinnerModal();
+// With nothing (just run the audit)
 
 transcodeBtn.addEventListener('click', async (event) => {
   // Get all checked files
@@ -181,10 +194,9 @@ transcodeBtn.addEventListener('click', async (event) => {
   const videoBitrate = formData.get('videoBitrate') || '';
   const audioChannels = formData.get('audioChannels') || '';
   const deleteOriginal = formData.get('deleteOriginal') === 'on';
+  const transcodeLocation = formData.get('transcodeLocation') || '';
   // Send to backend
   transcodeBtn.disabled = true;
-  renderMessage(message, 'info', 'Submitting transcode request...');
-  showFfmpegOutput();
   try {
     const res = await fetch('/api/transcode', {
       method: 'POST',
@@ -195,7 +207,8 @@ transcodeBtn.addEventListener('click', async (event) => {
         audioCodec,
         videoBitrate,
         audioChannels,
-        deleteOriginal
+        deleteOriginal,
+        transcodeLocation
       })
     });
     const data = await res.json();
@@ -205,5 +218,38 @@ transcodeBtn.addEventListener('click', async (event) => {
     renderMessage(message, 'danger', err.message);
   } finally {
     transcodeBtn.disabled = false;
+  }
+});
+
+// Ensure info button popup works
+resultsBody.addEventListener('click', function (e) {
+  const btn = e.target.closest('button[data-row-index]');
+  if (btn) {
+    const idx = parseInt(btn.getAttribute('data-row-index'), 10);
+    const row = window._lastAuditRows?.[idx];
+    if (!row) return;
+    // Populate modal
+    document.getElementById('detailsFilePath').textContent = row.fullPath || row.filePath || row.fileName;
+    const rowState = getRowState(row);
+    document.getElementById('detailsStatusBadge').textContent = getStatusLabel(rowState);
+    document.getElementById('detailsIssueBadge').textContent = `${row.issues || 0} issues`;
+    const detailsList = document.getElementById('detailsList');
+    detailsList.innerHTML = '';
+    if (row.details && Array.isArray(row.details) && row.details.length > 0) {
+      row.details.forEach(item => {
+        const li = document.createElement('li');
+        li.className = 'list-group-item';
+        li.textContent = item;
+        detailsList.appendChild(li);
+      });
+    } else {
+      const li = document.createElement('li');
+      li.className = 'list-group-item text-muted';
+      li.textContent = 'No issue details available.';
+      detailsList.appendChild(li);
+    }
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('detailsModal'));
+    modal.show();
   }
 });

@@ -1,5 +1,6 @@
 import path from 'node:path';
-import { runAudit, normalizeBitrateToBps, formatBps, formatSize } from '../src/audit-core.js';
+import { Worker } from 'node:worker_threads';
+import { normalizeBitrateToBps, formatBps } from '../src/audit-core.js';
 
 const VALID_OPERATORS = new Set(['>=', '<=', '=']);
 
@@ -12,6 +13,32 @@ function formatRule(label, operator, value) {
     return `${label}: any`;
   }
   return `${label}: ${operator} ${value}`;
+}
+
+function runAuditInWorker(root, criteria) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('../workers/auditWorker.js', import.meta.url), {
+      workerData: { root, criteria }
+    });
+
+    worker.once('message', (message) => {
+      if (!message?.ok) {
+        reject(new Error(message?.error || 'Audit worker failed.'));
+        return;
+      }
+      resolve(message.payload);
+    });
+
+    worker.once('error', (error) => {
+      reject(new Error(`Audit worker error: ${error.message}`));
+    });
+
+    worker.once('exit', (code) => {
+      if (code !== 0) {
+        reject(new Error(`Audit worker exited with code ${code}`));
+      }
+    });
+  });
 }
 
 export function buildAuditInput(body = {}) {
@@ -48,39 +75,32 @@ export function buildCriteria(input) {
 
 export async function executeAudit(input) {
   const criteria = buildCriteria(input);
-  const { rootPath, results, mismatchedCount } = await runAudit({
-    root: input.root,
-    criteria
-  });
+  const { rootPath, results, mismatchedCount } = await runAuditInWorker(input.root, criteria);
 
   const rows = results.map((result, idx) => ({
     fullPath: result.file.path,
     filePath: path.relative(rootPath, result.file.path) || path.basename(result.file.path),
     fileName: path.basename(result.file.path),
     index: idx + 1,
+    rawSize: result.file.size, // for MB display and sorting
+    size: result.file.size,    // fallback for legacy
     matches: result.matches,
     checks: result.checks || {},
-    size: formatSize(result.file.size),
-    videoCodec: result.actual.videoCodec || 'unknown',
-    videoBitrate: formatBps(result.actual.videoBitrate),
-    audioCodec: result.actual.audioCodec || 'unknown',
-    audioChannels: result.actual.audioChannels || 'unknown',
     issues: result.mismatches.length,
-    mismatches: result.mismatches
+    details: result.mismatches || [],
+    videoCodec: result.actual?.videoCodec || 'unknown',
+    videoBitrate: Number.isFinite(result.actual?.videoBitrate) ? formatBps(result.actual.videoBitrate) : 'unknown',
+    audioCodec: result.actual?.audioCodec || 'unknown',
+    audioChannels: Number.isFinite(result.actual?.audioChannels) ? result.actual.audioChannels : 'unknown'
   }));
 
   return {
     ok: true,
     summary: {
-      checkedCount: rows.length,
-      mismatchedCount,
       rootPath,
-      criteriaText: [
-        formatRule('video codec', '=', criteria.videoCodec),
-        formatRule('video bitrate', criteria.videoBitrateOp, criteria.videoBitrate ? formatBps(criteria.videoBitrate) : 'any'),
-        formatRule('audio codec', '=', criteria.audioCodec),
-        formatRule('audio channels', criteria.audioChannelsOp, criteria.audioChannels ?? 'any')
-      ].join(' | ')
+      checkedCount: results.length,
+      mismatchedCount,
+      criteriaText: JSON.stringify(criteria)
     },
     rows
   };

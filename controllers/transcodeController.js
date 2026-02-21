@@ -2,6 +2,26 @@ import path from 'path';
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
 
+const transcodeLocationRoot = path.resolve(process.env.TRANSCODE_LOCATION_ROOT || process.cwd());
+
+function resolveTranscodeLocation(inputPath) {
+  if (!inputPath) {
+    return null;
+  }
+
+  const resolved = path.resolve(String(inputPath));
+  const relativeToRoot = path.relative(transcodeLocationRoot, resolved);
+  const isInsideRoot =
+    relativeToRoot === '' ||
+    (!relativeToRoot.startsWith('..') && !path.isAbsolute(relativeToRoot));
+
+  if (!isInsideRoot) {
+    throw new Error(`transcodeLocation must be inside ${transcodeLocationRoot}`);
+  }
+
+  return resolved;
+}
+
 function buildOutputPath(inputPath) {
   const ext = path.extname(inputPath);
   const base = path.basename(inputPath, ext);
@@ -23,38 +43,90 @@ function buildFfmpegArgs(input, output, opts) {
 let lastFfmpegProcess = null;
 
 const transcode = async (req, res) => {
-  const { files, videoCodec, audioCodec, videoBitrate, audioChannels, deleteOriginal } = req.body;
+  const { files, videoCodec, audioCodec, videoBitrate, audioChannels, deleteOriginal, transcodeLocation } = req.body;
   if (!Array.isArray(files) || !files.length) {
     return res.status(400).json({ ok: false, error: 'No files provided.' });
   }
+  let safeTranscodeLocation = null;
+  try {
+    safeTranscodeLocation = resolveTranscodeLocation(transcodeLocation);
+    if (safeTranscodeLocation) {
+      await fs.mkdir(safeTranscodeLocation, { recursive: true });
+    }
+  } catch (error) {
+    return res.status(400).json({ ok: false, error: error.message });
+  }
   const results = [];
   for (const file of files) {
-    const output = buildOutputPath(file);
-    const args = buildFfmpegArgs(file, output, { videoCodec, audioCodec, videoBitrate, audioChannels });
+    let workingInput = file;
+    let workingOutput;
+    let tempInput = null;
+    let tempOutput = null;
     try {
+      // If transcodeLocation is set, copy file there and transcode in that folder
+      if (safeTranscodeLocation) {
+        const fileName = path.basename(file);
+        tempInput = path.join(safeTranscodeLocation, fileName);
+        await fs.copyFile(file, tempInput);
+        workingInput = tempInput;
+        tempOutput = buildOutputPath(tempInput);
+        workingOutput = tempOutput;
+      } else {
+        workingOutput = buildOutputPath(file);
+      }
+      const args = buildFfmpegArgs(workingInput, workingOutput, { videoCodec, audioCodec, videoBitrate, audioChannels });
+      console.log(`Running ffmpeg: ffmpeg ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}`);
       await new Promise((resolve, reject) => {
         const ff = spawn('ffmpeg', args);
         lastFfmpegProcess = ff;
         let stderr = '';
-        ff.stderr.on('data', d => { stderr += d.toString(); });
+        ff.stderr.on('data', d => {
+          const msg = d.toString();
+          stderr += msg;
+          process.stdout.write(msg);
+        });
+        ff.stdout && ff.stdout.on('data', d => process.stdout.write(d.toString()));
         ff.on('close', code => {
           lastFfmpegProcess = null;
           if (code === 0) resolve();
           else reject(new Error(stderr || `ffmpeg exited with code ${code}`));
         });
       });
-      // Delete original file if requested and transcode succeeded
-      if (deleteOriginal) {
-        try {
-          await fs.unlink(file);
-        } catch (delErr) {
-          results.push({ file, output, ok: true, warning: `Transcoded, but failed to delete original: ${delErr.message}` });
-          continue;
+      // If transcodeLocation, copy result back to original folder
+      if (safeTranscodeLocation && tempOutput) {
+        const origOutput = buildOutputPath(file);
+        await fs.copyFile(tempOutput, origOutput);
+        // Clean up temp files
+        await fs.unlink(tempInput);
+        await fs.unlink(tempOutput);
+        if (deleteOriginal) {
+          try {
+            console.log(`Deleting original file: ${file}`);
+            await fs.unlink(file);
+          } catch (delErr) {
+            results.push({ file, output: origOutput, ok: true, warning: `Transcoded, but failed to delete original: ${delErr.message}` });
+            continue;
+          }
         }
+        results.push({ file, output: origOutput, ok: true });
+      } else {
+        // No transcodeLocation, just handle output in place
+        if (deleteOriginal) {
+          try {
+            console.log(`Deleting original file: ${file}`);
+            await fs.unlink(file);
+          } catch (delErr) {
+            results.push({ file, output: workingOutput, ok: true, warning: `Transcoded, but failed to delete original: ${delErr.message}` });
+            continue;
+          }
+        }
+        results.push({ file, output: workingOutput, ok: true });
       }
-      results.push({ file, output, ok: true });
     } catch (err) {
-      results.push({ file, output, ok: false, error: err.message });
+      results.push({ file, output: workingOutput, ok: false, error: err.message });
+      // Clean up temp files if error
+      if (tempInput) { try { await fs.unlink(tempInput); } catch {} }
+      if (tempOutput) { try { await fs.unlink(tempOutput); } catch {} }
     }
   }
   const failed = results.filter(r => !r.ok);
@@ -90,4 +162,14 @@ const transcodeStream = (req, res) => {
   });
 };
 
-export default { transcode, transcodeStream };
+// Cancel endpoint: kill ffmpeg process
+export const transcodeCancel = (req, res) => {
+  if (lastFfmpegProcess && lastFfmpegProcess.kill) {
+    lastFfmpegProcess.kill('SIGTERM');
+    console.log('Transcode cancelled by user.');
+    return res.json({ ok: true, message: 'Transcode cancelled.' });
+  }
+  res.status(400).json({ ok: false, error: 'No transcode in progress.' });
+};
+
+export default { transcode, transcodeStream, transcodeCancel };

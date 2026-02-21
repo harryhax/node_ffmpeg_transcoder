@@ -1,5 +1,10 @@
 import { escapeHtml, truncateText } from './utils.js';
 
+function formatSizeMB(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0.00';
+  return (bytes / (1024 * 1024)).toFixed(2);
+}
+
 export function getRowState(row) {
   if (row.matches) return 'match';
   const checkValues = Object.values(row.checks || {}).filter((value) => value !== null);
@@ -31,8 +36,13 @@ export function setSelectOptions(select, values, preferredValue = '') {
   const currentValue = preferredValue || select.value;
   const options = ['<option value="">Any</option>'];
   for (const item of values) {
-    const selected = item === currentValue ? ' selected' : '';
-    options.push(`<option value="${escapeHtml(item)}"${selected}>${escapeHtml(item)}</option>`);
+    if (typeof item === 'object' && item.value && item.label) {
+      const selected = item.value === currentValue ? ' selected' : '';
+      options.push(`<option value="${escapeHtml(item.value)}"${selected}>${escapeHtml(item.label)}</option>`);
+    } else {
+      const selected = item === currentValue ? ' selected' : '';
+      options.push(`<option value="${escapeHtml(item)}"${selected}>${escapeHtml(item)}</option>`);
+    }
   }
   select.innerHTML = options.join('');
 }
@@ -49,15 +59,21 @@ export function renderResults(rows, resultsBody, setupEnhancements) {
     const fileName = row.fileName || 'unknown';
     const fullPath = row.filePath || row.fullPath || fileName;
     const detailsDisabled = row.issues > 0 ? '' : ' disabled';
+    // Use raw size for sorting, MB for display
+    const sizeMB = formatSizeMB(row.rawSize || row.size || 0);
+    const safeVideoCodec = row.videoCodec || 'unknown';
+    const safeVideoBitrate = row.videoBitrate || 'unknown';
+    const safeAudioCodec = row.audioCodec || 'unknown';
+    const safeAudioChannels = row.audioChannels ?? 'unknown';
     return `
       <tr class="${rowClass}">
         <td data-sort="${row.index}">${row.index}</td>
         <td>${statusLabel}</td>
-        <td>${escapeHtml(row.size)}</td>
-        <td class="${getCriteriaCellClass(rowState, row.checks?.videoCodec)}">${escapeHtml(row.videoCodec)}</td>
-        <td class="${getCriteriaCellClass(rowState, row.checks?.videoBitrate)}">${escapeHtml(row.videoBitrate)}</td>
-        <td class="${getCriteriaCellClass(rowState, row.checks?.audioCodec)}">${escapeHtml(row.audioCodec)}</td>
-        <td data-sort="${row.audioChannels}" class="${getCriteriaCellClass(rowState, row.checks?.audioChannels)}">${escapeHtml(String(row.audioChannels))}</td>
+        <td data-sort="${row.rawSize || row.size || 0}">${escapeHtml(sizeMB)}</td>
+        <td class="${getCriteriaCellClass(rowState, row.checks?.videoCodec)}">${escapeHtml(String(safeVideoCodec))}</td>
+        <td class="${getCriteriaCellClass(rowState, row.checks?.videoBitrate)}">${escapeHtml(String(safeVideoBitrate))}</td>
+        <td class="${getCriteriaCellClass(rowState, row.checks?.audioCodec)}">${escapeHtml(String(safeAudioCodec))}</td>
+        <td data-sort="${Number.isFinite(row.audioChannels) ? row.audioChannels : 0}" class="${getCriteriaCellClass(rowState, row.checks?.audioChannels)}">${escapeHtml(String(safeAudioChannels))}</td>
         <td data-sort="${row.issues}">${row.issues}</td>
         <td>
           <span data-bs-toggle="tooltip" data-bs-title="${escapeHtml(fullPath)}">${escapeHtml(truncateText(fileName))}</span>

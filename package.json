@@ -7,7 +7,7 @@
     "video-audit": "./src/video-audit.js"
   },
   "scripts": {
-    "check": "node --check src/audit-core.js && node --check src/video-audit.js && node --check src/smoke-test.js && node --check services/auditService.js && node --check services/optionsService.js && node --check controllers/auditController.js && node --check controllers/optionsController.js && node --check routes/audit.js && node --check routes/options.js && node --check public/js/app.js && node --check server.js",
+    "check": "node --check src/audit-core.js && node --check src/video-audit.js && node --check src/smoke-test.js && node --check workers/auditWorker.js && node --check services/auditService.js && node --check services/optionsService.js && node --check controllers/auditController.js && node --check controllers/optionsController.js && node --check controllers/smokeTestController.js && node --check controllers/transcodeController.js && node --check routes/audit.js && node --check routes/options.js && node --check routes/smokeTest.js && node --check routes/transcode.js && node --check public/js/app.js && node --check server.js",
     "audit": "node src/video-audit.js",
     "smoke-test": "node src/smoke-test.js",
     "server": "node server.js"

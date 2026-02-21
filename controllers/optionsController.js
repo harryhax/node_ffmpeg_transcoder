@@ -3,10 +3,7 @@ import { getCodecOptions, listDirectories } from '../services/optionsService.js'
 export async function getCodecOptionsHandler(_req, res) {
   try {
     const options = await getCodecOptions();
-    // Add GPU codecs to the video list if present
-    const gpuCodecs = ['hevc_videotoolbox', 'h264_videotoolbox', 'vp9_videotoolbox', 'prores_videotoolbox', 'cuda', 'nvenc', 'nvdec', 'qsv', 'vaapi'];
-    const videoCodecs = Array.from(new Set([...options.videoCodecs, ...gpuCodecs.filter(c => options.videoCodecs.includes(c))]));
-    res.json({ ok: true, videoCodecs, audioCodecs: options.audioCodecs });
+    res.json({ ok: true, videoCodecs: options.videoCodecs, audioCodecs: options.audioCodecs });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }

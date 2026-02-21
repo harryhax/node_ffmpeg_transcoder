@@ -37,6 +37,11 @@
             </div>
             <div class="form-text">Tip: pick from the dropdown or type/paste the full server path directly.</div>
           </div>
+          <div class="col-12 mt-2">
+            <label for="transcode-location" class="form-label">Transcode location (server folder)</label>
+            <input id="transcode-location" class="form-control" name="transcodeLocation" placeholder="/tmp/transcode or /Users/yourname/TranscodeTemp" />
+            <div class="form-text">Optional: If set, files will be copied here for transcoding, then copied back to the original folder after completion.</div>
+          </div>
           <div class="col-md-3">
             <label for="videoCodec" class="form-label">Video codec</label>
             <select id="videoCodec" class="form-select" name="videoCodec">
@@ -80,7 +85,8 @@
           </div>
           <div class="col-12 d-flex gap-2 align-items-center">
             <button id="run-btn" class="btn btn-primary" type="submit">Run Audit</button>
-            <button id="transcode-btn" class="btn btn-success" type="button">Transcode Checked</button>
+            <button id="transcode-btn" class="btn btn-success" type="button">Transcode</button>
+            <button id="cancel-btn" class="btn btn-danger ms-2" type="button">Cancel</button>
             <div class="form-check ms-3">
               <input class="form-check-input" type="checkbox" id="delete-original" name="deleteOriginal" />
               <label class="form-check-label" for="delete-original">Delete original file after transcode</label>
@@ -143,7 +149,7 @@
           </tr>
         </thead>
         <tbody id="results-body">
-          <tr><td colspan="10" class="text-muted">Run an audit to see results.</td></tr>
+          <tr><td colspan="11" class="text-muted">Run an audit to see results.</td></tr>
         </tbody>
       </table>
     </div>
@@ -174,19 +180,6 @@
           <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
         </div>
       </div>
-
-        <form id="smoke-form" class="row g-3 align-items-end mt-4">
-          <div class="col-auto">
-            <label for="smoke-count" class="form-label"># Files</label>
-            <input id="smoke-count" class="form-control" name="smokeCount" type="number" min="1" max="100" value="20" style="width: 90px;" />
-          </div>
-          <div class="col-auto">
-            <button id="smoke-btn" class="btn btn-secondary" type="submit">Generate Smoke Test</button>
-          </div>
-          <div class="col-auto">
-            <span id="smoke-status" class="form-text"></span>
-          </div>
-        </form>
     </div>
   </div>
 

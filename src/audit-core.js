@@ -136,6 +136,29 @@ function compareNumber(actual, expected, operator, tolerance = 0) {
   return Math.abs(actual - expected) <= tolerance;
 }
 
+function normalizeVideoCodecForMatch(codec) {
+  if (!codec) {
+    return '';
+  }
+
+  const value = String(codec).trim().toLowerCase();
+
+  if (value.includes('hevc') || value.includes('x265') || value === 'libx265') {
+    return 'hevc';
+  }
+
+  if (
+    value.includes('h264') ||
+    value.includes('avc') ||
+    value.includes('x264') ||
+    value === 'libx264'
+  ) {
+    return 'h264';
+  }
+
+  return value;
+}
+
 function evaluateMatch(target, actual) {
   const mismatches = [];
   const checks = {
@@ -145,7 +168,10 @@ function evaluateMatch(target, actual) {
     audioChannels: null
   };
 
-  if (target.videoCodec && actual.videoCodec !== target.videoCodec) {
+  const normalizedTargetVideoCodec = normalizeVideoCodecForMatch(target.videoCodec);
+  const normalizedActualVideoCodec = normalizeVideoCodecForMatch(actual.videoCodec);
+
+  if (target.videoCodec && normalizedActualVideoCodec !== normalizedTargetVideoCodec) {
     checks.videoCodec = false;
     mismatches.push(`video codec expected=${target.videoCodec} actual=${actual.videoCodec || 'unknown'}`);
   } else if (target.videoCodec) {

@@ -1,0 +1,21 @@
+{
+  "watch": [
+    "server.js",
+    "controllers",
+    "routes",
+    "services",
+    "src"
+  ],
+  "ext": "js,json",
+  "ignore": [
+    "public/**",
+    "smoke-fixtures/**",
+    "README.md",
+    "PACKAGING.md",
+    "RELEASE.md",
+    "install.sh",
+    "*.log",
+    ".git/**",
+    "node_modules/**"
+  ]
+}
