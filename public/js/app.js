@@ -48,7 +48,10 @@ async function syncCodecDropdowns() {
   const response = await fetch('/api/options/codecs');
   const data = await response.json();
   if (!response.ok || !data.ok) throw new Error(data.error || 'Unable to load codec options.');
-  setSelectOptions(videoCodecSelect, data.videoCodecs, 'hevc');
+  // Prefer GPU codecs by default
+  const gpuPreferred = ['hevc_videotoolbox', 'h264_videotoolbox', 'cuda', 'nvenc', 'qsv', 'vaapi'];
+  let defaultVideo = data.videoCodecs.find(c => gpuPreferred.includes(c)) || data.videoCodecs[0] || '';
+  setSelectOptions(videoCodecSelect, data.videoCodecs, defaultVideo);
   setSelectOptions(audioCodecSelect, data.audioCodecs, 'ac3');
 }
 
