@@ -11,13 +11,7 @@
   <nav class="navbar navbar-expand-lg navbar-light bg-light mb-4">
     <div class="container-fluid">
       <span class="navbar-brand mb-0 h1">Video Encoding Audit</span>
-      <button class="btn btn-outline-secondary" type="button" data-bs-toggle="offcanvas" data-bs-target="#settingsMenu" aria-controls="settingsMenu">
-        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" class="bi bi-gear" viewBox="0 0 16 16">
-          <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
-          <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.116l.094-.318z"/>
-        </svg>
-        <span class="ms-2">Settings</span>
-      </button>
+      <a class="btn btn-outline-secondary" href="/settings">Settings</a>
     </div>
   </nav>
   <main class="container py-4">
@@ -95,40 +89,6 @@
         </form>
       </div>
     </div>
-
-    <!-- Smoke test generator moved to settings menu -->
-  <!-- Settings Offcanvas -->
-  <div class="offcanvas offcanvas-end" tabindex="-1" id="settingsMenu" aria-labelledby="settingsMenuLabel">
-    <div class="offcanvas-header">
-      <h5 class="offcanvas-title" id="settingsMenuLabel">Settings</h5>
-      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
-    </div>
-    <div class="offcanvas-body">
-      <form id="smoke-form" class="row g-3 align-items-end">
-        <div class="row g-3 align-items-end">
-          <div class="col-auto">
-            <label for="smoke-count" class="form-label"># Files</label>
-            <input id="smoke-count" class="form-control" name="smokeCount" type="number" min="1" max="100" value="20" style="width: 90px;" />
-          </div>
-          <div class="col-auto">
-            <label for="smoke-mode" class="form-label">Mode</label>
-            <select id="smoke-mode" class="form-select" name="smokeMode" style="width: 160px;">
-              <option value="random" selected>Fully random</option>
-              <option value="combos">All match/no match combos</option>
-              <option value="both">Both</option>
-            </select>
-          </div>
-          <div class="col-auto d-flex align-items-end">
-            <button id="smoke-btn" class="btn btn-secondary" type="submit">Generate Smoke Test</button>
-          </div>
-          <div class="col-auto d-flex align-items-end">
-            <span id="smoke-status" class="form-text"></span>
-          </div>
-        </div>
-      </form>
-    </div>
-  </div>
-
     <div id="message" class="mt-3"></div>
 
     <div class="table-responsive mt-3">

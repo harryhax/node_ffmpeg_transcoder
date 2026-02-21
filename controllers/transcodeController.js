@@ -22,9 +22,30 @@ function resolveTranscodeLocation(inputPath) {
   return resolved;
 }
 
-function buildOutputPath(inputPath) {
-  const ext = path.extname(inputPath);
-  const base = path.basename(inputPath, ext);
+function isWebmCompatible(videoCodec, audioCodec) {
+  const normalizedVideo = (videoCodec || '').toLowerCase();
+  const normalizedAudio = (audioCodec || '').toLowerCase();
+
+  const videoOk =
+    !normalizedVideo ||
+    normalizedVideo.includes('vp8') ||
+    normalizedVideo.includes('vp9') ||
+    normalizedVideo.includes('av1');
+
+  const audioOk =
+    !normalizedAudio ||
+    normalizedAudio.includes('opus') ||
+    normalizedAudio.includes('vorbis');
+
+  return videoOk && audioOk;
+}
+
+function buildOutputPath(inputPath, opts = {}) {
+  const inputExt = path.extname(inputPath).toLowerCase();
+  const ext = inputExt === '.webm' && !isWebmCompatible(opts.videoCodec, opts.audioCodec)
+    ? '.mkv'
+    : inputExt;
+  const base = path.basename(inputPath, inputExt);
   const dir = path.dirname(inputPath);
   return path.join(dir, `${base}.transcoded${ext}`);
 }
@@ -37,6 +58,86 @@ function buildFfmpegArgs(input, output, opts) {
   if (opts.audioChannels) args.push('-ac', opts.audioChannels);
   args.push(output);
   return args;
+}
+
+const transcodeStreamClients = new Set();
+let transcodeInProgress = false;
+
+function writeSseEvent(res, event, payload) {
+  res.write(`event: ${event}\n`);
+  const text = String(payload ?? '');
+  for (const line of text.split(/\r?\n/)) {
+    res.write(`data: ${line}\n`);
+  }
+  res.write('\n');
+}
+
+function broadcastTranscodeEvent(event, payload) {
+  for (const client of transcodeStreamClients) {
+    writeSseEvent(client, event, payload);
+  }
+}
+
+function runFfprobeDuration(filePath) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      filePath
+    ];
+
+    const child = spawn('ffprobe', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString();
+    });
+
+    child.on('error', (error) => {
+      reject(new Error(`Failed to start ffprobe: ${error.message}`));
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        reject(new Error(`ffprobe exit code ${code}: ${stderr.trim() || 'unknown error'}`));
+        return;
+      }
+
+      const duration = Number.parseFloat(stdout.trim());
+      if (!Number.isFinite(duration) || duration <= 0) {
+        reject(new Error('Could not read media duration from ffprobe.'));
+        return;
+      }
+
+      resolve(duration);
+    });
+  });
+}
+
+async function verifyTranscodeOutput(inputPath, outputPath) {
+  const outputStat = await fs.stat(outputPath);
+  if (!outputStat.isFile() || outputStat.size <= 0) {
+    throw new Error('Output file missing or empty after transcode.');
+  }
+
+  const [inputDuration, outputDuration] = await Promise.all([
+    runFfprobeDuration(inputPath),
+    runFfprobeDuration(outputPath)
+  ]);
+
+  const durationDiff = Math.abs(inputDuration - outputDuration);
+  const toleranceSeconds = Math.max(2, inputDuration * 0.05);
+  if (durationDiff > toleranceSeconds) {
+    throw new Error(
+      `Output duration differs too much from input (input=${inputDuration.toFixed(2)}s output=${outputDuration.toFixed(2)}s).`
+    );
+  }
 }
 
 // Store last ffmpeg process for streaming
@@ -56,10 +157,17 @@ const transcode = async (req, res) => {
   } catch (error) {
     return res.status(400).json({ ok: false, error: error.message });
   }
+
+  transcodeInProgress = true;
+  broadcastTranscodeEvent('status', `Transcode started for ${files.length} file(s).`);
+
   const results = [];
+
   for (const file of files) {
     let workingInput = file;
     let workingOutput;
+    let verificationInput = file;
+    let verificationOutput;
     let tempInput = null;
     let tempOutput = null;
     try {
@@ -69,13 +177,17 @@ const transcode = async (req, res) => {
         tempInput = path.join(safeTranscodeLocation, fileName);
         await fs.copyFile(file, tempInput);
         workingInput = tempInput;
-        tempOutput = buildOutputPath(tempInput);
+        tempOutput = buildOutputPath(tempInput, { videoCodec, audioCodec });
         workingOutput = tempOutput;
+        verificationOutput = buildOutputPath(file, { videoCodec, audioCodec });
       } else {
-        workingOutput = buildOutputPath(file);
+        workingOutput = buildOutputPath(file, { videoCodec, audioCodec });
+        verificationOutput = workingOutput;
       }
       const args = buildFfmpegArgs(workingInput, workingOutput, { videoCodec, audioCodec, videoBitrate, audioChannels });
-      console.log(`Running ffmpeg: ffmpeg ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}`);
+      const commandText = `ffmpeg ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}`;
+      broadcastTranscodeEvent('status', `Processing: ${file}`);
+      broadcastTranscodeEvent('log', commandText);
       await new Promise((resolve, reject) => {
         const ff = spawn('ffmpeg', args);
         lastFfmpegProcess = ff;
@@ -83,9 +195,9 @@ const transcode = async (req, res) => {
         ff.stderr.on('data', d => {
           const msg = d.toString();
           stderr += msg;
-          process.stdout.write(msg);
+          broadcastTranscodeEvent('log', msg);
         });
-        ff.stdout && ff.stdout.on('data', d => process.stdout.write(d.toString()));
+        ff.stdout && ff.stdout.on('data', d => broadcastTranscodeEvent('log', d.toString()));
         ff.on('close', code => {
           lastFfmpegProcess = null;
           if (code === 0) resolve();
@@ -94,8 +206,9 @@ const transcode = async (req, res) => {
       });
       // If transcodeLocation, copy result back to original folder
       if (safeTranscodeLocation && tempOutput) {
-        const origOutput = buildOutputPath(file);
+        const origOutput = buildOutputPath(file, { videoCodec, audioCodec });
         await fs.copyFile(tempOutput, origOutput);
+        await verifyTranscodeOutput(verificationInput, origOutput);
         // Clean up temp files
         await fs.unlink(tempInput);
         await fs.unlink(tempOutput);
@@ -110,6 +223,7 @@ const transcode = async (req, res) => {
         }
         results.push({ file, output: origOutput, ok: true });
       } else {
+        await verifyTranscodeOutput(verificationInput, verificationOutput);
         // No transcodeLocation, just handle output in place
         if (deleteOriginal) {
           try {
@@ -124,15 +238,20 @@ const transcode = async (req, res) => {
       }
     } catch (err) {
       results.push({ file, output: workingOutput, ok: false, error: err.message });
+      broadcastTranscodeEvent('log', `ERROR ${file}: ${err.message}`);
       // Clean up temp files if error
       if (tempInput) { try { await fs.unlink(tempInput); } catch {} }
       if (tempOutput) { try { await fs.unlink(tempOutput); } catch {} }
     }
   }
+
+  transcodeInProgress = false;
   const failed = results.filter(r => !r.ok);
   if (failed.length) {
+    broadcastTranscodeEvent('done', 'Transcode finished with errors.');
     return res.status(500).json({ ok: false, error: `Some files failed: ${failed.map(f => f.file).join(', ')}` });
   }
+  broadcastTranscodeEvent('done', 'Transcode finished successfully.');
   res.json({ ok: true, message: `Transcoded ${results.length} file(s).`, results });
 };
 
@@ -142,23 +261,10 @@ const transcodeStream = (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
-  if (!lastFfmpegProcess) {
-    res.write('event: done\ndata: No transcode in progress.\n\n');
-    res.end();
-    return;
-  }
-  const onData = (data) => {
-    res.write(`data: ${data.toString().replace(/\n/g, '\ndata: ')}\n\n`);
-  };
-  lastFfmpegProcess.stderr.on('data', onData);
-  lastFfmpegProcess.on('close', () => {
-    res.write('event: done\ndata: Transcode finished.\n\n');
-    res.end();
-  });
+  transcodeStreamClients.add(res);
+  writeSseEvent(res, 'status', transcodeInProgress ? 'Transcode in progress.' : 'Connected. Waiting for transcode.');
   req.on('close', () => {
-    if (lastFfmpegProcess && lastFfmpegProcess.stderr) {
-      lastFfmpegProcess.stderr.off('data', onData);
-    }
+    transcodeStreamClients.delete(res);
   });
 };
 

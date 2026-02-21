@@ -24,6 +24,10 @@ app.get('/', (_req, res) => {
   res.sendFile(path.join(publicDir, 'index.html'));
 });
 
+app.get('/settings', (_req, res) => {
+  res.sendFile(path.join(publicDir, 'settings.html'));
+});
+
 app.listen(port, () => {
   console.log(`Web UI running at http://localhost:${port}`);
 });
