@@ -37,6 +37,7 @@ function parseCodecOutput(output) {
   const videoCodecs = new Set();
   const audioCodecs = new Set();
 
+  const encoderRegex = /encoders: ([^\)]+)\)/i;
   const lines = output.split(/\r?\n/);
   for (const line of lines) {
     const match = line.match(/^\s([D\.])([E\.])([VASDT\.])[A-Z\.]{3}\s+([^\s]+)\s+/i);
@@ -52,10 +53,19 @@ function parseCodecOutput(output) {
       continue;
     }
 
+    // Extract encoder names if present
+    let encoders = [];
+    const encoderMatch = line.match(encoderRegex);
+    if (encoderMatch) {
+      encoders = encoderMatch[1].split(/\s+/).filter(Boolean);
+    }
+
     if (type === 'V') {
       videoCodecs.add(codecName);
+      encoders.forEach(e => videoCodecs.add(e));
     } else if (type === 'A') {
       audioCodecs.add(codecName);
+      encoders.forEach(e => audioCodecs.add(e));
     }
   }
 
