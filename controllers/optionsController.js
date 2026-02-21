@@ -3,12 +3,8 @@ import { getCodecOptions, listDirectories } from '../services/optionsService.js'
 export async function getCodecOptionsHandler(_req, res) {
   try {
     const options = await getCodecOptions();
-    // Only expose popular/safe codecs for dropdowns
-    const allowedVideo = ['h264', 'hevc', 'vp9', 'libx264', 'libx265', 'libvpx-vp9'];
-    const allowedAudio = ['aac', 'ac3', 'opus', 'libopus'];
-    const videoCodecs = options.videoCodecs.filter(c => allowedVideo.includes(c));
-    const audioCodecs = options.audioCodecs.filter(c => allowedAudio.includes(c));
-    res.json({ ok: true, videoCodecs, audioCodecs });
+    // Show all codecs detected by ffmpeg
+    res.json({ ok: true, videoCodecs: options.videoCodecs, audioCodecs: options.audioCodecs });
   } catch (error) {
     res.status(500).json({ ok: false, error: error.message });
   }
