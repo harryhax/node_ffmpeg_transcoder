@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Video Encoding Audit</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="/css/styles.css" rel="stylesheet" />
+</head>
+<body>
+  <nav class="navbar navbar-expand-lg navbar-light bg-light mb-4">
+    <div class="container-fluid">
+      <span class="navbar-brand mb-0 h1">Video Encoding Audit</span>
+      <button class="btn btn-outline-secondary" type="button" data-bs-toggle="offcanvas" data-bs-target="#settingsMenu" aria-controls="settingsMenu">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" fill="currentColor" class="bi bi-gear" viewBox="0 0 16 16">
+          <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z"/>
+          <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.116l.094-.318z"/>
+        </svg>
+        <span class="ms-2">Settings</span>
+      </button>
+    </div>
+  </nav>
+  <main class="container py-4">
+    <div class="card mb-4">
+      <div class="card-header fw-bold">Detect</div>
+      <div class="card-body">
+        <form id="audit-form" class="row g-3 align-items-end">
+          <div class="col-12">
+            <label for="root" class="form-label">Root folder (server path)</label>
+            <input id="root" class="form-control" name="root" value="./smoke-fixtures" placeholder="/Users/yourname/Videos or ./smoke-fixtures" required />
+            <div class="form-text">This must be a path on the machine running this server (not your browser's local sandbox).</div>
+            <div class="d-flex gap-2 mt-2">
+              <select id="root-picker" class="form-select">
+                <option value="">Select a discovered server folder...</option>
+              </select>
+              <button id="refresh-dirs" class="btn btn-outline-secondary" type="button">Refresh Folders</button>
+            </div>
+            <div class="form-text">Tip: pick from the dropdown or type/paste the full server path directly.</div>
+          </div>
+          <div class="col-md-3">
+            <label for="videoCodec" class="form-label">Video codec</label>
+            <select id="videoCodec" class="form-select" name="videoCodec">
+              <option value="">Any</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label for="videoBitrate" class="form-label">Video bitrate</label>
+            <div class="input-group">
+              <select id="videoBitrateOp" class="form-select" name="videoBitrateOp" aria-label="Video bitrate rule" style="max-width: 150px;">
+                <option value=">=" selected>at least (> =)</option>
+                <option value="<=">at most (<=)</option>
+                <option value="=">about (=)</option>
+              </select>
+              <input id="videoBitrate" class="form-control" name="videoBitrate" type="number" min="1" step="1" value="6000" placeholder="6000" />
+              <span class="input-group-text">k</span>
+            </div>
+          </div>
+          <div class="col-md-3">
+            <label for="audioCodec" class="form-label">Audio codec</label>
+            <select id="audioCodec" class="form-select" name="audioCodec">
+              <option value="">Any</option>
+            </select>
+          </div>
+          <div class="col-md-3">
+            <label for="audioChannels" class="form-label">Audio channels</label>
+            <div class="input-group">
+              <select id="audioChannelsOp" class="form-select" name="audioChannelsOp" aria-label="Audio channels rule" style="max-width: 150px;">
+                <option value=">=" selected>at least (> =)</option>
+                <option value="<=">at most (<=)</option>
+                <option value="=">exact (=)</option>
+              </select>
+              <select id="audioChannels" class="form-select" name="audioChannels">
+                <option value="">Any</option>
+                <option value="1">1 (Mono)</option>
+                <option value="2">2 (Stereo)</option>
+                <option value="6" selected>6 (5.1)</option>
+                <option value="8">8 (7.1)</option>
+              </select>
+            </div>
+          </div>
+          <div class="col-12 d-flex gap-2 align-items-center">
+            <button id="run-btn" class="btn btn-primary" type="submit">Run Audit</button>
+            <button id="transcode-btn" class="btn btn-success" type="button">Transcode Checked</button>
+            <div class="form-check ms-3">
+              <input class="form-check-input" type="checkbox" id="delete-original" name="deleteOriginal" />
+              <label class="form-check-label" for="delete-original">Delete original file after transcode</label>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Smoke test generator moved to settings menu -->
+  <!-- Settings Offcanvas -->
+  <div class="offcanvas offcanvas-end" tabindex="-1" id="settingsMenu" aria-labelledby="settingsMenuLabel">
+    <div class="offcanvas-header">
+      <h5 class="offcanvas-title" id="settingsMenuLabel">Settings</h5>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="offcanvas-body">
+      <form id="smoke-form" class="row g-3 align-items-end">
+        <div class="row g-3 align-items-end">
+          <div class="col-auto">
+            <label for="smoke-count" class="form-label"># Files</label>
+            <input id="smoke-count" class="form-control" name="smokeCount" type="number" min="1" max="100" value="20" style="width: 90px;" />
+          </div>
+          <div class="col-auto">
+            <label for="smoke-mode" class="form-label">Mode</label>
+            <select id="smoke-mode" class="form-select" name="smokeMode" style="width: 160px;">
+              <option value="random" selected>Fully random</option>
+              <option value="combos">All match/no match combos</option>
+              <option value="both">Both</option>
+            </select>
+          </div>
+          <div class="col-auto d-flex align-items-end">
+            <button id="smoke-btn" class="btn btn-secondary" type="submit">Generate Smoke Test</button>
+          </div>
+          <div class="col-auto d-flex align-items-end">
+            <span id="smoke-status" class="form-text"></span>
+          </div>
+        </div>
+      </form>
+    </div>
+  </div>
+
+    <div id="message" class="mt-3"></div>
+
+    <div class="table-responsive mt-3">
+      <table id="results-table" class="table table-bordered table-sm align-middle">
+        <thead class="table-light">
+          <tr>
+            <th># <span class="sort-icon" title="Sort">⇅</span></th>
+            <th>Status <span class="sort-icon" title="Sort">⇅</span></th>
+            <th>Size <span class="sort-icon" title="Sort">⇅</span></th>
+            <th>V Codec <span class="sort-icon" title="Sort">⇅</span></th>
+            <th>V Bitrate <span class="sort-icon" title="Sort">⇅</span></th>
+            <th>A Codec <span class="sort-icon" title="Sort">⇅</span></th>
+            <th>A Ch <span class="sort-icon" title="Sort">⇅</span></th>
+            <th>Issues <span class="sort-icon" title="Sort">⇅</span></th>
+            <th>File <span class="sort-icon" title="Sort">⇅</span></th>
+            <th>Actions</th>
+            <th><input type="checkbox" id="select-all-checkbox" title="Select all" /></th>
+          </tr>
+        </thead>
+        <tbody id="results-body">
+          <tr><td colspan="10" class="text-muted">Run an audit to see results.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </main>
+
+  <div class="modal fade" id="detailsModal" tabindex="-1" aria-labelledby="detailsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h5 class="modal-title" id="detailsModalLabel">File Details</h5>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          <div class="mb-3">
+            <div class="fw-semibold">File</div>
+            <div id="detailsFilePath" class="text-break"></div>
+          </div>
+          <div class="mb-3">
+            <span id="detailsStatusBadge" class="badge text-bg-secondary">STATUS</span>
+            <span id="detailsIssueBadge" class="badge text-bg-dark ms-2">0 issues</span>
+          </div>
+          <div>
+            <div class="fw-semibold mb-2">Details</div>
+            <ul id="detailsList" class="list-group"></ul>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+        </div>
+      </div>
+
+        <form id="smoke-form" class="row g-3 align-items-end mt-4">
+          <div class="col-auto">
+            <label for="smoke-count" class="form-label"># Files</label>
+            <input id="smoke-count" class="form-control" name="smokeCount" type="number" min="1" max="100" value="20" style="width: 90px;" />
+          </div>
+          <div class="col-auto">
+            <button id="smoke-btn" class="btn btn-secondary" type="submit">Generate Smoke Test</button>
+          </div>
+          <div class="col-auto">
+            <span id="smoke-status" class="form-text"></span>
+          </div>
+        </form>
+    </div>
+  </div>
+
+  <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
+  <script src="https://unpkg.com/tablesort@5.3.0/dist/sorts/tablesort.number.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
