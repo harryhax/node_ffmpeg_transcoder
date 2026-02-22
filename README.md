@@ -66,6 +66,24 @@ npm run smoke-test -- --out ./smoke-fixtures
 - If you see errors, check permissions on your media folders
 - For help, open an issue or ask in discussions
 
+### macOS Sleep/Power (Important for long transcodes)
+
+If your Intel Mac sleeps during a transcode, jobs can fail and external drives may remount read-only after an unclean interruption.
+
+Start the server in no-sleep mode:
+
+```bash
+npm run server:no-sleep
+```
+
+Optional power profile tuning while transcoding:
+
+```bash
+sudo pmset -c sleep 0 displaysleep 30 disksleep 10 lowpowermode 0
+sudo pmset -b sleep 0 displaysleep 15 disksleep 10 lowpowermode 0
+pmset -g custom
+```
+
 ## Project Structure
 
 - `server.js` - Express app and static hosting
