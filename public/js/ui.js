@@ -1,4 +1,4 @@
-import { escapeHtml, truncateText } from './utils.js';
+import { escapeHtml, truncateText, createLogViewerHref } from './utils.js';
 
 function formatSizeMB(bytes) {
   if (!Number.isFinite(bytes) || bytes <= 0) return '0.00';
@@ -65,7 +65,7 @@ export function renderResults(rows, resultsBody, setupEnhancements) {
     const safeVideoBitrate = row.videoBitrate || 'unknown';
     const safeAudioCodec = row.audioCodec || 'unknown';
     const safeAudioChannels = row.audioChannels ?? 'unknown';
-    const logHref = row.logPath ? `file://${encodeURI(String(row.logPath))}` : '';
+    const logHref = row.logPath ? createLogViewerHref(row.logPath) : '';
     const logAction = row.logPath
       ? `<a class="btn btn-sm details-icon-btn" href="${escapeHtml(logHref)}" target="_blank" rel="noopener noreferrer" title="Open log file" aria-label="Open log file">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="bi bi-link-45deg" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
@@ -76,7 +76,7 @@ export function renderResults(rows, resultsBody, setupEnhancements) {
           </a>`
       : '';
     return `
-      <tr class="${rowClass}">
+      <tr class="${rowClass}" data-file-path="${escapeHtml(String(row.fullPath || row.filePath || ''))}">
         <td data-sort="${row.index}">${row.index}</td>
         <td>${statusLabel}</td>
         <td data-sort="${row.rawSize || row.size || 0}">${escapeHtml(sizeMB)}</td>

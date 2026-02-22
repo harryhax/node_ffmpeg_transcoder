@@ -1,19 +1,12 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { Worker } from 'node:worker_threads';
-import { normalizeBitrateToBps, formatBps } from '../src/audit-core.js';
+import { inspectWithFallback, normalizeBitrateToBps } from '../src/audit-core.js';
 
 const VALID_OPERATORS = new Set(['>=', '<=', '=']);
 
 function normalizeOperator(value, fallback = '=') {
   return VALID_OPERATORS.has(value) ? value : fallback;
-}
-
-function formatRule(label, operator, value) {
-  if (value === undefined || value === null || value === '') {
-    return `${label}: any`;
-  }
-  return `${label}: ${operator} ${value}`;
 }
 
 function runAuditInWorker(root, criteria) {
@@ -100,11 +93,12 @@ async function resolveExistingLogPath(sourcePath) {
   return null;
 }
 
-export async function executeAudit(input) {
-  const criteria = buildCriteria(input);
-  const { rootPath, results, mismatchedCount } = await runAuditInWorker(input.root, criteria);
+async function mapAuditResultToRow(result, idx, rootPath) {
+  const videoBitrateK = Number.isFinite(result.actual?.videoBitrate)
+    ? `${Math.round(result.actual.videoBitrate / 1000)}K`
+    : 'unknown';
 
-  const rows = await Promise.all(results.map(async (result, idx) => ({
+  return {
     sourceStats: {
       sizeBytes: result.file.size,
       modifiedAt: Number.isFinite(result.file.mtimeMs) ? new Date(result.file.mtimeMs).toISOString() : null,
@@ -125,19 +119,80 @@ export async function executeAudit(input) {
       ...(result.mismatches || [])
     ],
     videoCodec: result.actual?.videoCodec || 'unknown',
-    videoBitrate: Number.isFinite(result.actual?.videoBitrate) ? formatBps(result.actual.videoBitrate) : 'unknown',
+    videoBitrate: videoBitrateK,
     audioCodec: result.actual?.audioCodec || 'unknown',
     audioChannels: Number.isFinite(result.actual?.audioChannels) ? result.actual.audioChannels : 'unknown'
-  })));
+  };
+}
+
+export async function executeAudit(input, files = null) {
+  const criteria = buildCriteria(input);
+  const rootPath = path.resolve(input.root || '.');
+
+  if (Array.isArray(files)) {
+    const requestedPaths = Array.from(new Set(
+      files
+        .map((filePath) => String(filePath || '').trim())
+        .filter(Boolean)
+    ));
+
+    if (!requestedPaths.length) {
+      throw new Error('No files provided for targeted audit.');
+    }
+
+    const existingFiles = [];
+    const missingFiles = [];
+
+    for (const rawPath of requestedPaths) {
+      const resolvedPath = path.resolve(rawPath);
+      try {
+        const stat = await fs.stat(resolvedPath);
+        if (!stat.isFile()) {
+          missingFiles.push(resolvedPath);
+          continue;
+        }
+        existingFiles.push({
+          path: resolvedPath,
+          size: stat.size,
+          mtimeMs: stat.mtimeMs,
+          ctimeMs: stat.ctimeMs
+        });
+      } catch {
+        missingFiles.push(resolvedPath);
+      }
+    }
+
+    const results = await Promise.all(existingFiles.map((file) => inspectWithFallback(file, criteria)));
+    const rows = await Promise.all(results.map((result, idx) => mapAuditResultToRow(result, idx, rootPath)));
+    const mismatchedCount = results.filter((item) => !item.matches).length;
+
+    return {
+      ok: true,
+      summary: {
+        rootPath,
+        checkedCount: rows.length,
+        mismatchedCount,
+        requestedCount: requestedPaths.length,
+        missingCount: missingFiles.length,
+        criteriaText: JSON.stringify(criteria)
+      },
+      rows,
+      missingFiles
+    };
+  }
+
+  const fullAudit = await runAuditInWorker(input.root, criteria);
+  const rows = await Promise.all(fullAudit.results.map((result, idx) => mapAuditResultToRow(result, idx, fullAudit.rootPath)));
 
   return {
     ok: true,
     summary: {
-      rootPath,
-      checkedCount: results.length,
-      mismatchedCount,
+      rootPath: fullAudit.rootPath,
+      checkedCount: fullAudit.results.length,
+      mismatchedCount: fullAudit.mismatchedCount,
       criteriaText: JSON.stringify(criteria)
     },
-    rows
+    rows,
+    missingFiles: []
   };
 }

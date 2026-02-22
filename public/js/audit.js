@@ -55,11 +55,11 @@ export async function runAudit(form, runButton, message, resultsBody, renderResu
     audioChannels: formData.get('audioChannels') || ''
   };
   runButton.disabled = true;
-  runButton.textContent = 'Running...';
+  runButton.textContent = 'Scanning...';
   message.innerHTML = '';
   if (!payload.root || !String(payload.root).trim()) {
     runButton.disabled = false;
-    runButton.textContent = 'Run Audit';
+    runButton.textContent = 'Scan Files';
     renderMessage(message, 'danger', 'Please enter a root folder path on the server.');
     return;
   }
@@ -74,14 +74,14 @@ export async function runAudit(form, runButton, message, resultsBody, renderResu
     renderMessage(
       message,
       'info',
-      `Criteria: ${data.summary.criteriaText}\nChecked ${data.summary.checkedCount} files in ${data.summary.rootPath}. Mismatches: ${data.summary.mismatchedCount}.`
+      `Checked ${data.summary.checkedCount} files in ${data.summary.rootPath}. Mismatches: ${data.summary.mismatchedCount}.`
     );
-    renderResultsFn(data.rows);
+    renderResultsFn(data.rows, data.summary || {});
   } catch (error) {
-    resultsBody.innerHTML = '<tr><td colspan="11" class="text-muted">Run an audit to see results.</td></tr>';
+    resultsBody.innerHTML = '<tr><td colspan="11" class="text-muted">Scan files to see results.</td></tr>';
     renderMessage(message, 'danger', error.message);
   } finally {
     runButton.disabled = false;
-    runButton.textContent = 'Run Audit';
+    runButton.textContent = 'Scan Files';
   }
 }

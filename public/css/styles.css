@@ -47,8 +47,24 @@ body {
   text-align: center;
 }
 
+#results-table {
+  font-size: 0.88rem;
+}
+
 #results-table tr:hover td {
   background: #f8f9fa;
+}
+
+#results-table tr.transcode-active-row td {
+  background: #fff3cd;
+}
+
+#results-table tr.transcode-result-match td {
+  background: #d1e7dd;
+}
+
+#results-table tr.transcode-result-mismatch td {
+  background: #f8d7da;
 }
 
 .details-icon-btn {
@@ -89,8 +105,8 @@ body {
 }
 
 @media (max-width: 768px) {
-  .table th,
-  .table td {
-    font-size: 0.92rem;
+  #results-table th,
+  #results-table td {
+    font-size: 0.82rem;
   }
 }

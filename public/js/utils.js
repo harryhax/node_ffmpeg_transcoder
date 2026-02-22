@@ -15,6 +15,14 @@ export function truncateText(value, maxLength = 36) {
   return `${value.slice(0, maxLength - 3)}...`;
 }
 
+export function createLogViewerHref(logPath) {
+  if (!logPath) {
+    return '';
+  }
+  const query = new URLSearchParams({ path: String(logPath) });
+  return `/api/options/log?${query.toString()}`;
+}
+
 export function renderMessage(container, type, text) {
   const withBreaks = escapeHtml(text).replace(/\n/g, '<br />');
   container.innerHTML = `<div class="alert alert-${type}" role="alert">${withBreaks}</div>`;

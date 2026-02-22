@@ -7,6 +7,61 @@ import { execFile } from 'node:child_process';
 const execFileAsync = promisify(execFile);
 
 const transcodeLocationRoot = path.resolve(process.env.TRANSCODE_LOCATION_ROOT || process.cwd());
+const transcodeRunLogDir = path.resolve(process.cwd(), 'transcode-logs');
+
+function makeRunLogPath(startedAtMs = Date.now()) {
+  const stamp = new Date(startedAtMs).toISOString().replace(/[:.]/g, '-');
+  return path.join(transcodeRunLogDir, `transcode-run-${stamp}.log`);
+}
+
+function stringifyForLog(value) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+async function writeTranscodeRunLog({
+  logPath,
+  startedAtMs,
+  requestPayload,
+  queuedDurations,
+  fileDiagnostics,
+  fileAttempts,
+  results,
+  savingsSummary
+}) {
+  const finishedAtMs = Date.now();
+  const lines = [
+    '[transcode run]',
+    `startedAt: ${new Date(startedAtMs).toISOString()}`,
+    `finishedAt: ${new Date(finishedAtMs).toISOString()}`,
+    `durationSeconds: ${((finishedAtMs - startedAtMs) / 1000).toFixed(2)}`,
+    `workingDir: ${process.cwd()}`,
+    '',
+    '[request payload]',
+    stringifyForLog(requestPayload),
+    '',
+    '[queued durations seconds]',
+    stringifyForLog(queuedDurations),
+    '',
+    '[input file diagnostics]',
+    stringifyForLog(fileDiagnostics),
+    '',
+    '[file attempts]',
+    stringifyForLog(fileAttempts),
+    '',
+    '[results]',
+    stringifyForLog(results),
+    '',
+    '[savings summary]',
+    stringifyForLog(savingsSummary)
+  ];
+
+  await fs.mkdir(path.dirname(logPath), { recursive: true });
+  await fs.writeFile(logPath, `${lines.join('\n')}\n`, 'utf8');
+}
 
 function resolveTranscodeLocation(inputPath) {
   if (!inputPath) {
@@ -71,9 +126,51 @@ function buildLogPathFromOutput(outputPath) {
   return path.join(dir, `${base}.log`);
 }
 
+function buildFailLogPathFromOutput(outputPath) {
+  const ext = path.extname(outputPath);
+  const base = path.basename(outputPath, ext);
+  const dir = path.dirname(outputPath);
+  return path.join(dir, `${base}.fail.log`);
+}
+
 const transcodeStreamClients = new Set();
 let transcodeInProgress = false;
 let lastFfmpegProcessPaused = false;
+const transcodeSavingsTotals = {
+  filesTranscoded: 0,
+  attemptedFiles: 0,
+  failedFiles: 0,
+  sourceBytes: 0,
+  outputBytes: 0,
+  savedBytes: 0,
+  reductionPctSum: 0,
+  reductionPctCount: 0,
+  startedAt: new Date().toISOString()
+};
+
+function getTranscodeSavingsSummary() {
+  const attemptedFiles = transcodeSavingsTotals.attemptedFiles;
+  const filesTranscoded = transcodeSavingsTotals.filesTranscoded;
+  const failedFiles = transcodeSavingsTotals.failedFiles;
+  const successRatePct = attemptedFiles > 0
+    ? (filesTranscoded / attemptedFiles) * 100
+    : 0;
+  const avgReductionPct = transcodeSavingsTotals.reductionPctCount > 0
+    ? (transcodeSavingsTotals.reductionPctSum / transcodeSavingsTotals.reductionPctCount)
+    : 0;
+
+  return {
+    filesTranscoded,
+    attemptedFiles,
+    failedFiles,
+    sourceBytes: transcodeSavingsTotals.sourceBytes,
+    outputBytes: transcodeSavingsTotals.outputBytes,
+    savedBytes: transcodeSavingsTotals.savedBytes,
+    successRatePct,
+    avgReductionPct,
+    startedAt: transcodeSavingsTotals.startedAt
+  };
+}
 
 function writeSseEvent(res, event, payload) {
   res.write(`event: ${event}\n`);
@@ -88,6 +185,10 @@ function broadcastTranscodeEvent(event, payload) {
   for (const client of transcodeStreamClients) {
     writeSseEvent(client, event, payload);
   }
+}
+
+function emitTranscodeFileEvent(event, payload) {
+  broadcastTranscodeEvent(event, JSON.stringify(payload));
 }
 
 async function readBatteryInfo() {
@@ -134,44 +235,99 @@ function normalizeStartBatteryPct(input) {
   return value;
 }
 
+function parseTimestampToSeconds(value) {
+  if (!value || typeof value !== 'string') {
+    return null;
+  }
+
+  const matched = value.trim().match(/^(\d+):(\d{2}):(\d{2}(?:\.\d+)?)$/);
+  if (!matched) {
+    return null;
+  }
+
+  const hours = Number.parseInt(matched[1], 10);
+  const minutes = Number.parseInt(matched[2], 10);
+  const seconds = Number.parseFloat(matched[3]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) {
+    return null;
+  }
+
+  return (hours * 3600) + (minutes * 60) + seconds;
+}
+
+function extractProgressFromChunk(chunkText) {
+  if (!chunkText) {
+    return null;
+  }
+
+  const timeMatches = [...chunkText.matchAll(/time=(\d+:\d{2}:\d{2}(?:\.\d+)?)/g)];
+  if (!timeMatches.length) {
+    return null;
+  }
+
+  const speedMatches = [...chunkText.matchAll(/speed=\s*([0-9.]+)x/g)];
+  const latestTime = timeMatches[timeMatches.length - 1][1];
+  const latestSpeed = speedMatches.length ? Number.parseFloat(speedMatches[speedMatches.length - 1][1]) : null;
+
+  return {
+    processedSeconds: parseTimestampToSeconds(latestTime),
+    speed: Number.isFinite(latestSpeed) && latestSpeed > 0 ? latestSpeed : null
+  };
+}
+
 function runFfprobeDuration(filePath) {
-  return new Promise((resolve, reject) => {
-    const args = [
-      '-v', 'error',
-      '-show_entries', 'format=duration',
-      '-of', 'default=noprint_wrappers=1:nokey=1',
-      filePath
-    ];
+  return new Promise((resolve) => {
+    const args = ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', filePath];
 
     const child = spawn('ffprobe', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
-    let stderr = '';
 
     child.stdout.on('data', (chunk) => {
       stdout += chunk.toString();
     });
 
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('error', (error) => {
-      reject(new Error(`Failed to start ffprobe: ${error.message}`));
+    child.on('error', () => {
+      resolve(null);
     });
 
     child.on('close', (code) => {
       if (code !== 0) {
-        reject(new Error(`ffprobe exit code ${code}: ${stderr.trim() || 'unknown error'}`));
+        resolve(null);
         return;
       }
 
-      const duration = Number.parseFloat(stdout.trim());
-      if (!Number.isFinite(duration) || duration <= 0) {
-        reject(new Error('Could not read media duration from ffprobe.'));
-        return;
-      }
+      try {
+        const parsed = JSON.parse(stdout || '{}');
+        const candidates = [];
 
-      resolve(duration);
+        const formatDuration = Number.parseFloat(parsed?.format?.duration);
+        if (Number.isFinite(formatDuration) && formatDuration > 0) {
+          candidates.push(formatDuration);
+        }
+
+        const streams = Array.isArray(parsed?.streams) ? parsed.streams : [];
+        for (const stream of streams) {
+          const streamDuration = Number.parseFloat(stream?.duration);
+          if (Number.isFinite(streamDuration) && streamDuration > 0) {
+            candidates.push(streamDuration);
+          }
+
+          const tagDuration = stream?.tags?.DURATION;
+          const tagSeconds = parseTimestampToSeconds(String(tagDuration || ''));
+          if (Number.isFinite(tagSeconds) && tagSeconds > 0) {
+            candidates.push(tagSeconds);
+          }
+        }
+
+        if (!candidates.length) {
+          resolve(null);
+          return;
+        }
+
+        resolve(Math.max(...candidates));
+      } catch {
+        resolve(null);
+      }
     });
   });
 }
@@ -186,6 +342,10 @@ async function verifyTranscodeOutput(inputPath, outputPath) {
     runFfprobeDuration(inputPath),
     runFfprobeDuration(outputPath)
   ]);
+
+  if (!Number.isFinite(inputDuration) || !Number.isFinite(outputDuration)) {
+    return;
+  }
 
   const durationDiff = Math.abs(inputDuration - outputDuration);
   const toleranceSeconds = Math.max(2, inputDuration * 0.05);
@@ -312,6 +472,71 @@ async function writePerFileTranscodeLog({
   await fs.writeFile(logPath, `${lines.join('\n')}\n`, 'utf8');
 }
 
+async function readFileSizeSafe(filePath) {
+  if (!filePath) {
+    return null;
+  }
+
+  try {
+    const stat = await fs.stat(filePath);
+    if (!stat.isFile() || !Number.isFinite(stat.size)) {
+      return null;
+    }
+    return stat.size;
+  } catch {
+    return null;
+  }
+}
+
+async function attachSizeStats(results) {
+  return Promise.all(results.map(async (item) => {
+    const sourceSizeBytes = await readFileSizeSafe(item.file);
+    const outputSizeBytes = await readFileSizeSafe(item.output);
+    const bytesSaved = Number.isFinite(sourceSizeBytes) && Number.isFinite(outputSizeBytes)
+      ? (sourceSizeBytes - outputSizeBytes)
+      : null;
+
+    return {
+      ...item,
+      sourceSizeBytes,
+      outputSizeBytes,
+      bytesSaved
+    };
+  }));
+}
+
+function accumulateTranscodeSavings(results) {
+  if (!Array.isArray(results) || !results.length) {
+    return;
+  }
+
+  transcodeSavingsTotals.attemptedFiles += results.length;
+
+  for (const item of results) {
+    if (item?.ok !== true) {
+      transcodeSavingsTotals.failedFiles += 1;
+      continue;
+    }
+
+    transcodeSavingsTotals.filesTranscoded += 1;
+
+    if (!Number.isFinite(item?.sourceSizeBytes) || !Number.isFinite(item?.outputSizeBytes)) {
+      continue;
+    }
+    transcodeSavingsTotals.sourceBytes += item.sourceSizeBytes;
+    transcodeSavingsTotals.outputBytes += item.outputSizeBytes;
+    transcodeSavingsTotals.savedBytes += (item.sourceSizeBytes - item.outputSizeBytes);
+
+    if (item.sourceSizeBytes > 0) {
+      const reductionPct = ((item.sourceSizeBytes - item.outputSizeBytes) / item.sourceSizeBytes) * 100;
+      if (Number.isFinite(reductionPct)) {
+        transcodeSavingsTotals.reductionPctSum += reductionPct;
+        transcodeSavingsTotals.reductionPctCount += 1;
+      }
+    }
+  }
+}
+
 // Store last ffmpeg process for streaming
 let lastFfmpegProcess = null;
 
@@ -354,9 +579,116 @@ const transcode = async (req, res) => {
   transcodeInProgress = true;
   broadcastTranscodeEvent('status', `Transcode started for ${files.length} file(s).`);
 
-  const results = [];
+  const runStartedAtMs = Date.now();
+  const runLogPath = makeRunLogPath(runStartedAtMs);
 
-  for (const file of files) {
+  const fileDiagnostics = await Promise.all(files.map(async (filePath) => {
+    const resolved = path.resolve(String(filePath || ''));
+    try {
+      const stat = await fs.stat(resolved);
+      return {
+        file: resolved,
+        exists: stat.isFile(),
+        sizeBytes: stat.size,
+        mtime: stat.mtime?.toISOString?.() || null
+      };
+    } catch (error) {
+      return {
+        file: resolved,
+        exists: false,
+        error: error.message
+      };
+    }
+  }));
+
+  const queuedDurations = await Promise.all(
+    files.map(async (filePath) => {
+      const duration = await runFfprobeDuration(filePath).catch(() => null);
+      return Number.isFinite(duration) && duration > 0 ? duration : null;
+    })
+  );
+
+  broadcastTranscodeEvent('queue', JSON.stringify({
+    totalFiles: files.length,
+    files: files.map((filePath, index) => ({ file: filePath, durationSeconds: queuedDurations[index] }))
+  }));
+
+  const results = [];
+  const fileAttempts = [];
+  let completedFiles = 0;
+  const transcodeStartedAtMs = Date.now();
+
+  const emitOverallProgress = ({
+    currentFileIndex = null,
+    currentProcessedSeconds = 0,
+    currentDurationSeconds = null,
+    currentSpeed = null,
+    currentElapsedSeconds = null
+  } = {}) => {
+    const knownDurations = queuedDurations.filter((duration) => Number.isFinite(duration) && duration > 0);
+    const fallbackAverage = knownDurations.length
+      ? (knownDurations.reduce((sum, value) => sum + value, 0) / knownDurations.length)
+      : (Number.isFinite(currentDurationSeconds) && currentDurationSeconds > 0 ? currentDurationSeconds : null);
+
+    const estimatedDurations = queuedDurations.map((duration) => {
+      if (Number.isFinite(duration) && duration > 0) {
+        return duration;
+      }
+      return Number.isFinite(fallbackAverage) && fallbackAverage > 0 ? fallbackAverage : 0;
+    });
+
+    const totalEstimatedSeconds = estimatedDurations.reduce((sum, value) => sum + value, 0);
+    const completedEstimatedSeconds = estimatedDurations
+      .slice(0, completedFiles)
+      .reduce((sum, value) => sum + value, 0);
+
+    const processedContribution = Number.isFinite(currentProcessedSeconds) && currentProcessedSeconds > 0
+      ? currentProcessedSeconds
+      : 0;
+    const doneEstimatedSeconds = Math.max(0, completedEstimatedSeconds + processedContribution);
+
+    const percent = totalEstimatedSeconds > 0
+      ? Math.max(0, Math.min(100, (doneEstimatedSeconds / totalEstimatedSeconds) * 100))
+      : Math.max(0, Math.min(100, (completedFiles / Math.max(1, files.length)) * 100));
+
+    const remainingEstimatedSeconds = totalEstimatedSeconds > 0
+      ? Math.max(0, totalEstimatedSeconds - doneEstimatedSeconds)
+      : null;
+
+    const runElapsedSeconds = Math.max(0, (Date.now() - transcodeStartedAtMs) / 1000);
+    const averageSpeed = Number.isFinite(doneEstimatedSeconds) && doneEstimatedSeconds > 0 && runElapsedSeconds > 0
+      ? (doneEstimatedSeconds / runElapsedSeconds)
+      : null;
+
+    const etaSeconds = Number.isFinite(remainingEstimatedSeconds) && Number.isFinite(averageSpeed) && averageSpeed > 0
+      ? (remainingEstimatedSeconds / averageSpeed)
+      : null;
+
+    const knownCount = knownDurations.length;
+    const estimateCoverage = files.length > 0 ? (knownCount / files.length) : 1;
+    const estimateConfidence = estimateCoverage >= 0.85
+      ? 'high'
+      : (estimateCoverage >= 0.45 ? 'medium' : 'low');
+
+    broadcastTranscodeEvent('overall', JSON.stringify({
+      percent,
+      etaSeconds,
+      completedFiles,
+      totalFiles: files.length,
+      currentFileIndex,
+      remainingFiles: Math.max(0, files.length - completedFiles),
+      totalEstimatedSeconds: Number.isFinite(totalEstimatedSeconds) && totalEstimatedSeconds > 0 ? totalEstimatedSeconds : null,
+      doneEstimatedSeconds,
+      averageSpeed: Number.isFinite(averageSpeed) ? averageSpeed : null,
+      estimateConfidence,
+      estimateCoverage
+    }));
+  };
+
+  emitOverallProgress();
+
+  for (let fileIndex = 0; fileIndex < files.length; fileIndex += 1) {
+    const file = files[fileIndex];
     let workingInput = file;
     let workingOutput;
     let verificationInput = file;
@@ -368,6 +700,7 @@ const transcode = async (req, res) => {
     let ffmpegCommand = '';
     let finalOutputPath = null;
     let perFileLogPath = null;
+    let sourceDurationSeconds = null;
     try {
       if (Number.isFinite(startBatteryThreshold)) {
         const battery = await readBatteryInfo();
@@ -375,12 +708,16 @@ const transcode = async (req, res) => {
           const errorText = `Cannot verify battery for start threshold ${startBatteryThreshold}%.`;
           results.push({ file, output: null, ok: false, error: errorText, logPath: null });
           broadcastTranscodeEvent('status', `Skipped: ${path.basename(file)} (${errorText})`);
+          completedFiles += 1;
+          emitOverallProgress({ currentFileIndex: fileIndex });
           continue;
         }
         if (battery.percent <= startBatteryThreshold) {
           const errorText = `Battery ${battery.percent}% is not above start threshold ${startBatteryThreshold}%.`;
           results.push({ file, output: null, ok: false, error: errorText, logPath: null });
           broadcastTranscodeEvent('status', `Skipped: ${path.basename(file)} (${errorText})`);
+          completedFiles += 1;
+          emitOverallProgress({ currentFileIndex: fileIndex });
           continue;
         }
       }
@@ -399,14 +736,38 @@ const transcode = async (req, res) => {
         verificationOutput = workingOutput;
       }
       const args = buildFfmpegArgs(workingInput, workingOutput, { videoCodec, audioCodec, videoBitrate, audioChannels });
+      sourceDurationSeconds = await runFfprobeDuration(workingInput).catch(() => null);
       const commandText = `ffmpeg ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}`;
       ffmpegCommand = commandText;
       broadcastTranscodeEvent('status', `Processing: ${file}`);
+      emitTranscodeFileEvent('file-start', {
+        file,
+        fileIndex,
+        totalFiles: files.length
+      });
       broadcastTranscodeEvent('log', commandText);
+      broadcastTranscodeEvent('progress', JSON.stringify({
+        file,
+        totalDurationSeconds: sourceDurationSeconds,
+        processedSeconds: 0,
+        percent: 0,
+        etaSeconds: null,
+        elapsedSeconds: 0,
+        speed: null
+      }));
+      emitOverallProgress({
+        currentFileIndex: fileIndex,
+        currentProcessedSeconds: 0,
+        currentDurationSeconds: sourceDurationSeconds,
+        currentSpeed: null,
+        currentElapsedSeconds: 0
+      });
       await new Promise((resolve, reject) => {
         const ff = spawn('ffmpeg', args);
         lastFfmpegProcess = ff;
         lastFfmpegProcessPaused = false;
+        const startedAtMs = Date.now();
+        let lastProgressEmitMs = 0;
         let batteryCheckInFlight = false;
         const batteryMonitorInterval = pauseBatteryThreshold
           ? setInterval(async () => {
@@ -442,6 +803,54 @@ const transcode = async (req, res) => {
           stderr += msg;
           ffmpegStderr += msg;
           broadcastTranscodeEvent('log', msg);
+
+          const progress = extractProgressFromChunk(msg);
+          if (!progress || !Number.isFinite(progress.processedSeconds)) {
+            return;
+          }
+
+          const nowMs = Date.now();
+          if (nowMs - lastProgressEmitMs < 500) {
+            return;
+          }
+          lastProgressEmitMs = nowMs;
+
+          const processedSeconds = Math.max(0, progress.processedSeconds);
+          const elapsedSeconds = Math.max(0, (nowMs - startedAtMs) / 1000);
+          const totalDuration = Number.isFinite(sourceDurationSeconds) && sourceDurationSeconds > 0
+            ? sourceDurationSeconds
+            : null;
+          const remainingSeconds = totalDuration ? Math.max(0, totalDuration - processedSeconds) : null;
+          let etaSeconds = null;
+
+          if (remainingSeconds !== null) {
+            if (Number.isFinite(progress.speed) && progress.speed > 0) {
+              etaSeconds = remainingSeconds / progress.speed;
+            } else if (processedSeconds > 0 && elapsedSeconds > 0) {
+              etaSeconds = remainingSeconds * (elapsedSeconds / processedSeconds);
+            }
+          }
+
+          const percent = totalDuration
+            ? Math.max(0, Math.min(100, (processedSeconds / totalDuration) * 100))
+            : null;
+
+          broadcastTranscodeEvent('progress', JSON.stringify({
+            file,
+            totalDurationSeconds: totalDuration,
+            processedSeconds,
+            percent,
+            etaSeconds,
+            elapsedSeconds,
+            speed: progress.speed
+          }));
+          emitOverallProgress({
+            currentFileIndex: fileIndex,
+            currentProcessedSeconds: processedSeconds,
+            currentDurationSeconds: totalDuration,
+            currentSpeed: progress.speed,
+            currentElapsedSeconds: elapsedSeconds
+          });
         });
         ff.stdout && ff.stdout.on('data', d => {
           const msg = d.toString();
@@ -473,10 +882,25 @@ const transcode = async (req, res) => {
             await fs.unlink(file);
           } catch (delErr) {
             results.push({ file, output: origOutput, ok: true, warning: `Transcoded, but failed to delete original: ${delErr.message}`, logPath: perFileLogPath });
+            emitTranscodeFileEvent('file-complete', {
+              file,
+              output: origOutput,
+              ok: true,
+              deletedOriginal: false,
+              warning: `Transcoded, but failed to delete original: ${delErr.message}`,
+              logPath: perFileLogPath
+            });
             continue;
           }
         }
         results.push({ file, output: origOutput, ok: true, logPath: perFileLogPath });
+        emitTranscodeFileEvent('file-complete', {
+          file,
+          output: origOutput,
+          ok: true,
+          deletedOriginal: deleteOriginal === true,
+          logPath: perFileLogPath
+        });
       } else {
         finalOutputPath = verificationOutput;
         await verifyTranscodeOutput(verificationInput, verificationOutput);
@@ -487,10 +911,25 @@ const transcode = async (req, res) => {
             await fs.unlink(file);
           } catch (delErr) {
             results.push({ file, output: workingOutput, ok: true, warning: `Transcoded, but failed to delete original: ${delErr.message}`, logPath: perFileLogPath });
+            emitTranscodeFileEvent('file-complete', {
+              file,
+              output: workingOutput,
+              ok: true,
+              deletedOriginal: false,
+              warning: `Transcoded, but failed to delete original: ${delErr.message}`,
+              logPath: perFileLogPath
+            });
             continue;
           }
         }
         results.push({ file, output: workingOutput, ok: true, logPath: perFileLogPath });
+        emitTranscodeFileEvent('file-complete', {
+          file,
+          output: workingOutput,
+          ok: true,
+          deletedOriginal: deleteOriginal === true,
+          logPath: perFileLogPath
+        });
       }
 
       if (saveTranscodeLog === true || saveTranscodeLog === 'true') {
@@ -512,49 +951,146 @@ const transcode = async (req, res) => {
           }
         }
       }
+
+      if (Number.isFinite(sourceDurationSeconds) && sourceDurationSeconds > 0) {
+        broadcastTranscodeEvent('progress', JSON.stringify({
+          file,
+          totalDurationSeconds: sourceDurationSeconds,
+          processedSeconds: sourceDurationSeconds,
+          percent: 100,
+          etaSeconds: 0,
+          elapsedSeconds: null,
+          speed: null
+        }));
+      }
+      completedFiles += 1;
+      emitOverallProgress({ currentFileIndex: fileIndex });
+
+      fileAttempts.push({
+        file,
+        status: 'success',
+        ffmpegCommand,
+        ffmpegStdout,
+        ffmpegStderr,
+        outputPath: finalOutputPath || workingOutput || null,
+        perFileLogPath
+      });
     } catch (err) {
       results.push({ file, output: workingOutput, ok: false, error: err.message, logPath: perFileLogPath });
+      emitTranscodeFileEvent('file-failed', {
+        file,
+        output: workingOutput || null,
+        ok: false,
+        error: err.message,
+        logPath: perFileLogPath
+      });
       broadcastTranscodeEvent('log', `ERROR ${file}: ${err.message}`);
 
-      if (saveTranscodeLog === true || saveTranscodeLog === 'true') {
-        const fallbackOutput = finalOutputPath || workingOutput || buildOutputPath(file, { videoCodec, audioCodec });
-        const targetLogPath = buildLogPathFromOutput(fallbackOutput);
-        perFileLogPath = targetLogPath;
-        try {
-          await writePerFileTranscodeLog({
-            logPath: targetLogPath,
-            sourcePath: file,
-            outputPath: finalOutputPath,
-            ffmpegCommand,
-            ffmpegStdout,
-            ffmpegStderr,
-            status: 'failed',
-            errorMessage: err.message
-          });
-          for (let i = results.length - 1; i >= 0; i -= 1) {
-            if (results[i].file === file && !results[i].logPath) {
-              results[i].logPath = perFileLogPath;
-              break;
-            }
+      const fallbackOutput = finalOutputPath || workingOutput || buildOutputPath(file, { videoCodec, audioCodec });
+      const targetFailLogPath = buildFailLogPathFromOutput(fallbackOutput);
+      perFileLogPath = targetFailLogPath;
+      try {
+        await writePerFileTranscodeLog({
+          logPath: targetFailLogPath,
+          sourcePath: file,
+          outputPath: finalOutputPath,
+          ffmpegCommand,
+          ffmpegStdout,
+          ffmpegStderr,
+          status: 'failed',
+          errorMessage: err.message
+        });
+        for (let i = results.length - 1; i >= 0; i -= 1) {
+          if (results[i].file === file) {
+            results[i].logPath = perFileLogPath;
+            break;
           }
-        } catch {
         }
+      } catch (logError) {
+        broadcastTranscodeEvent('log', `ERROR writing fail log for ${file}: ${logError.message || 'unknown error'}`);
       }
 
       // Clean up temp files if error
       if (tempInput) { try { await fs.unlink(tempInput); } catch {} }
       if (tempOutput) { try { await fs.unlink(tempOutput); } catch {} }
+      completedFiles += 1;
+      emitOverallProgress({ currentFileIndex: fileIndex });
+
+      fileAttempts.push({
+        file,
+        status: 'failed',
+        error: err.message,
+        ffmpegCommand,
+        ffmpegStdout,
+        ffmpegStderr,
+        outputPath: finalOutputPath || workingOutput || null,
+        perFileLogPath
+      });
     }
   }
 
+  emitOverallProgress({ currentFileIndex: null, currentProcessedSeconds: 0, currentDurationSeconds: null, currentSpeed: null, currentElapsedSeconds: null });
+
+  const enrichedResults = await attachSizeStats(results);
+  accumulateTranscodeSavings(enrichedResults);
+  const savingsSummary = getTranscodeSavingsSummary();
+
+  await writeTranscodeRunLog({
+    logPath: runLogPath,
+    startedAtMs: runStartedAtMs,
+    requestPayload: {
+      files,
+      videoCodec,
+      audioCodec,
+      videoBitrate,
+      audioChannels,
+      deleteOriginal,
+      transcodeLocation: safeTranscodeLocation,
+      pauseBatteryPct,
+      startBatteryPct,
+      saveTranscodeLog
+    },
+    queuedDurations,
+    fileDiagnostics,
+    fileAttempts,
+    results: enrichedResults,
+    savingsSummary
+  }).catch((error) => {
+    broadcastTranscodeEvent('log', `ERROR writing transcode run log: ${error.message}`);
+  });
+
   transcodeInProgress = false;
-  const failed = results.filter(r => !r.ok);
+  const failed = enrichedResults.filter(r => !r.ok);
   if (failed.length) {
     broadcastTranscodeEvent('done', 'Transcode finished with errors.');
-    return res.status(500).json({ ok: false, error: `Some files failed: ${failed.map(f => f.file).join(', ')}`, results });
+    const failedFiles = failed.map((item) => item.file);
+    const uniqueReasons = Array.from(new Set(
+      failed
+        .map((item) => (typeof item.error === 'string' ? item.error.trim() : ''))
+        .filter(Boolean)
+    ));
+
+    const reasonPreview = uniqueReasons.slice(0, 3).join(' | ');
+    const errorMessage = uniqueReasons.length
+      ? `Transcode failed: ${reasonPreview}${uniqueReasons.length > 3 ? ' | ...' : ''}`
+      : `Some files failed: ${failedFiles.join(', ')}`;
+
+    return res.status(500).json({
+      ok: false,
+      error: errorMessage,
+      failedFiles,
+      failedReasons: uniqueReasons,
+      results: enrichedResults,
+      summary: savingsSummary,
+      runLogPath
+    });
   }
   broadcastTranscodeEvent('done', 'Transcode finished successfully.');
-  res.json({ ok: true, message: `Transcoded ${results.length} file(s).`, results });
+  res.json({ ok: true, message: `Transcoded ${enrichedResults.length} file(s).`, results: enrichedResults, summary: savingsSummary, runLogPath });
+};
+
+const transcodeSummary = (_req, res) => {
+  res.json({ ok: true, summary: getTranscodeSavingsSummary() });
 };
 
 // SSE endpoint for streaming ffmpeg output
@@ -587,4 +1123,4 @@ export const transcodeCancel = (req, res) => {
   res.status(400).json({ ok: false, error: 'No transcode in progress.' });
 };
 
-export default { transcode, transcodeStream, transcodeCancel };
+export default { transcode, transcodeStream, transcodeCancel, transcodeSummary };

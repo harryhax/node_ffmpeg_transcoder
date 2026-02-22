@@ -1,4 +1,4 @@
-import { renderMessage } from './utils.js';
+import { createLogViewerHref, escapeHtml, renderMessage } from './utils.js';
 import { renderResults, setSelectOptions, getRowState, getStatusLabel } from './ui.js';
 import { loadCodecs, loadDirectories, runAudit } from './audit.js';
 
@@ -64,7 +64,7 @@ function saveAuditSettings() {
     pauseBatteryPct: typeof existing.pauseBatteryPct === 'string' ? existing.pauseBatteryPct : '',
     startBatteryPct: typeof existing.startBatteryPct === 'string' ? existing.startBatteryPct : '',
     saveTranscodeLog: existing.saveTranscodeLog === true,
-    deleteOriginal: data.get('deleteOriginal') === 'on'
+    deleteOriginal: document.getElementById('delete-original')?.checked === true
   };
   globalThis.localStorage?.setItem(AUDIT_SETTINGS_KEY, JSON.stringify(payload));
 }
@@ -113,37 +113,19 @@ const message = document.getElementById('message');
 const resultsBody = document.getElementById('results-body');
 const rootInput = document.getElementById('root');
 const rootPicker = document.getElementById('root-picker');
-const rootSection = document.getElementById('root-section');
-const toggleRootSectionButton = document.getElementById('toggle-root-section');
 const refreshDirsButton = document.getElementById('refresh-dirs');
 const videoCodecSelect = document.getElementById('videoCodec');
 const audioCodecSelect = document.getElementById('audioCodec');
 const transcodeBtn = document.getElementById('transcode-btn');
 const selectAllCheckbox = document.getElementById('select-all-checkbox');
-const statCpuUsage = document.getElementById('stat-cpu-usage');
-const statCpuTemp = document.getElementById('stat-cpu-temp');
-const statBattery = document.getElementById('stat-battery');
-const statMemory = document.getElementById('stat-memory');
-const statUptime = document.getElementById('stat-uptime');
-
-function updateRootToggleLabel(isExpanded) {
-  if (!toggleRootSectionButton) {
-    return;
-  }
-  toggleRootSectionButton.textContent = isExpanded ? 'Hide' : 'Show';
-}
-
-if (rootSection && toggleRootSectionButton) {
-  rootSection.addEventListener('shown.bs.collapse', () => {
-    updateRootToggleLabel(true);
-  });
-  rootSection.addEventListener('hidden.bs.collapse', () => {
-    updateRootToggleLabel(false);
-  });
-}
+const savedNet = document.getElementById('saved-net');
+const savedSource = document.getElementById('saved-source');
+const savedFiles = document.getElementById('saved-files');
 
 let transcodeEventSource = null;
 let transcodeOutputTimeout = null;
+let activeTranscodingFilePath = null;
+let latestScanSourceTotalBytes = null;
 
 const transcodeOutputWrap = document.createElement('div');
 transcodeOutputWrap.className = 'mt-3 d-none';
@@ -154,13 +136,116 @@ transcodeOutputWrap.innerHTML = `
       <button id="transcode-cancel-inline" class="btn btn-sm btn-danger d-none" type="button">Cancel</button>
     </div>
     <div class="card-body py-2">
-      <pre id="transcode-output" class="mb-0" style="max-height: 240px; overflow: auto; white-space: pre-wrap;"></pre>
+      <div id="transcode-overall-wrap" class="mb-2 d-none">
+        <div class="small fw-semibold mb-1">Total Progress</div>
+        <div class="progress" role="progressbar" aria-label="Overall transcode progress" aria-valuemin="0" aria-valuemax="100">
+          <div id="transcode-overall-bar" class="progress-bar bg-success" style="width: 0%">0%</div>
+        </div>
+        <div id="transcode-overall-meta" class="small text-muted mt-1">Waiting for queue...</div>
+        <div id="transcode-savings-meta" class="small text-muted mt-1 d-none">Space saved: calculating...</div>
+      </div>
+      <div id="transcode-progress-wrap" class="mb-2 d-none">
+        <div class="progress" role="progressbar" aria-label="Transcode progress" aria-valuemin="0" aria-valuemax="100">
+          <div id="transcode-progress-bar" class="progress-bar" style="width: 0%">0%</div>
+        </div>
+        <div id="transcode-progress-meta" class="small text-muted mt-1">Preparing transcode...</div>
+      </div>
+      <button id="toggle-transcode-output" class="btn btn-sm btn-outline-secondary mb-2" type="button">Show detailed logs</button>
+      <pre id="transcode-output" class="mb-0 d-none" style="max-height: 240px; overflow: auto; white-space: pre-wrap;"></pre>
     </div>
   </div>
 `;
 message.insertAdjacentElement('afterend', transcodeOutputWrap);
 const transcodeOutput = transcodeOutputWrap.querySelector('#transcode-output');
+const toggleTranscodeOutputBtn = transcodeOutputWrap.querySelector('#toggle-transcode-output');
 const inlineCancelBtn = transcodeOutputWrap.querySelector('#transcode-cancel-inline');
+const transcodeOverallWrap = transcodeOutputWrap.querySelector('#transcode-overall-wrap');
+const transcodeOverallBar = transcodeOutputWrap.querySelector('#transcode-overall-bar');
+const transcodeOverallMeta = transcodeOutputWrap.querySelector('#transcode-overall-meta');
+const transcodeSavingsMeta = transcodeOutputWrap.querySelector('#transcode-savings-meta');
+const transcodeProgressWrap = transcodeOutputWrap.querySelector('#transcode-progress-wrap');
+const transcodeProgressBar = transcodeOutputWrap.querySelector('#transcode-progress-bar');
+const transcodeProgressMeta = transcodeOutputWrap.querySelector('#transcode-progress-meta');
+
+function setTranscodeOutputVisibility(isVisible) {
+  if (!transcodeOutput || !toggleTranscodeOutputBtn) {
+    return;
+  }
+  transcodeOutput.classList.toggle('d-none', !isVisible);
+  toggleTranscodeOutputBtn.textContent = isVisible ? 'Hide detailed logs' : 'Show detailed logs';
+}
+
+if (toggleTranscodeOutputBtn) {
+  toggleTranscodeOutputBtn.addEventListener('click', () => {
+    const isCurrentlyVisible = transcodeOutput && !transcodeOutput.classList.contains('d-none');
+    setTranscodeOutputVisibility(!isCurrentlyVisible);
+  });
+}
+
+function formatDurationClock(totalSeconds) {
+  if (!Number.isFinite(totalSeconds) || totalSeconds < 0) {
+    return '--:--';
+  }
+  const rounded = Math.floor(totalSeconds);
+  const hours = Math.floor(rounded / 3600);
+  const minutes = Math.floor((rounded % 3600) / 60);
+  const seconds = rounded % 60;
+  if (hours > 0) {
+    return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+function updateTranscodeProgress(progressPayload) {
+  if (!transcodeProgressWrap || !transcodeProgressBar || !transcodeProgressMeta) {
+    return;
+  }
+
+  transcodeProgressWrap.classList.remove('d-none');
+  const safePercent = Number.isFinite(progressPayload?.percent)
+    ? Math.max(0, Math.min(100, progressPayload.percent))
+    : 0;
+  const percentText = `${Math.round(safePercent)}%`;
+  transcodeProgressBar.style.width = `${safePercent}%`;
+  transcodeProgressBar.textContent = percentText;
+  transcodeProgressBar.setAttribute('aria-valuenow', String(Math.round(safePercent)));
+
+  const filePath = typeof progressPayload?.file === 'string' ? progressPayload.file : '';
+  const fileName = filePath ? filePath.split(/[\\/]/).pop() : 'Current file';
+  const currentText = formatDurationClock(progressPayload?.processedSeconds);
+  const totalText = formatDurationClock(progressPayload?.totalDurationSeconds);
+  const etaText = Number.isFinite(progressPayload?.etaSeconds) ? formatDurationClock(progressPayload.etaSeconds) : '--:--';
+  const speedText = Number.isFinite(progressPayload?.speed) ? `${progressPayload.speed.toFixed(2)}x` : '--';
+
+  transcodeProgressMeta.textContent = `${fileName} • ${currentText} / ${totalText} • ETA ${etaText} • Speed ${speedText}`;
+}
+
+function updateTranscodeOverallProgress(overallPayload) {
+  if (!transcodeOverallWrap || !transcodeOverallBar || !transcodeOverallMeta) {
+    return;
+  }
+
+  transcodeOverallWrap.classList.remove('d-none');
+  const safePercent = Number.isFinite(overallPayload?.percent)
+    ? Math.max(0, Math.min(100, overallPayload.percent))
+    : 0;
+  const percentText = `${Math.round(safePercent)}%`;
+  transcodeOverallBar.style.width = `${safePercent}%`;
+  transcodeOverallBar.textContent = percentText;
+  transcodeOverallBar.setAttribute('aria-valuenow', String(Math.round(safePercent)));
+
+  const completedFiles = Number.isFinite(overallPayload?.completedFiles) ? overallPayload.completedFiles : 0;
+  const totalFiles = Number.isFinite(overallPayload?.totalFiles) ? overallPayload.totalFiles : 0;
+  const etaText = Number.isFinite(overallPayload?.etaSeconds) ? formatDurationClock(overallPayload.etaSeconds) : '--:--';
+  const speedText = Number.isFinite(overallPayload?.averageSpeed) ? `${overallPayload.averageSpeed.toFixed(2)}x` : '--';
+  const confidenceRaw = typeof overallPayload?.estimateConfidence === 'string'
+    ? overallPayload.estimateConfidence.toLowerCase()
+    : 'low';
+  const confidenceLabel = confidenceRaw === 'high'
+    ? 'Estimate: high confidence'
+    : (confidenceRaw === 'medium' ? 'Estimate: medium confidence' : 'Estimate: low confidence');
+  transcodeOverallMeta.textContent = `${completedFiles}/${totalFiles} files • ETA ${etaText} • Average speed ${speedText} • ${confidenceLabel}`;
+}
 
 function appendTranscodeOutput(text) {
   if (!transcodeOutput) {
@@ -172,6 +257,220 @@ function appendTranscodeOutput(text) {
   transcodeOutput.scrollTop = transcodeOutput.scrollHeight;
 }
 
+function formatMB(bytes) {
+  if (!Number.isFinite(bytes)) {
+    return '--';
+  }
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+function getRowsTotalBytes(rows) {
+  if (!Array.isArray(rows)) {
+    return 0;
+  }
+
+  return rows.reduce((sum, row) => {
+    const rowBytes = Number.isFinite(row?.sourceStats?.sizeBytes)
+      ? row.sourceStats.sizeBytes
+      : (Number.isFinite(row?.rawSize) ? row.rawSize : 0);
+    return sum + rowBytes;
+  }, 0);
+}
+
+function updateOriginalTotalFromRows(rows) {
+  if (!savedSource) {
+    return;
+  }
+
+  const totalBytes = getRowsTotalBytes(rows);
+  latestScanSourceTotalBytes = totalBytes;
+
+  savedSource.textContent = formatMB(totalBytes);
+}
+
+function updateNetSavedFromRows(rows) {
+  if (!savedNet || !Number.isFinite(latestScanSourceTotalBytes)) {
+    return;
+  }
+
+  const currentTotalBytes = getRowsTotalBytes(rows);
+  const netSavedBytes = latestScanSourceTotalBytes - currentTotalBytes;
+  if (netSavedBytes >= 0) {
+    savedNet.textContent = formatMB(netSavedBytes);
+  } else {
+    savedNet.textContent = `-${formatMB(Math.abs(netSavedBytes))}`;
+  }
+}
+
+function renderAppSavingsSummary(summary) {
+  if (!savedNet || !savedSource || !savedFiles) {
+    return;
+  }
+
+  const sourceBytes = Number.isFinite(summary?.sourceBytes) ? summary.sourceBytes : 0;
+  const outputBytes = Number.isFinite(summary?.outputBytes) ? summary.outputBytes : 0;
+  const savedBytes = Number.isFinite(summary?.savedBytes) ? summary.savedBytes : (sourceBytes - outputBytes);
+  const filesCount = Number.isFinite(summary?.filesTranscoded) ? summary.filesTranscoded : 0;
+
+  if (!Number.isFinite(latestScanSourceTotalBytes)) {
+    if (savedBytes >= 0) {
+      savedNet.textContent = formatMB(savedBytes);
+    } else {
+      savedNet.textContent = `-${formatMB(Math.abs(savedBytes))}`;
+    }
+    savedSource.textContent = formatMB(sourceBytes);
+  }
+  savedFiles.textContent = String(filesCount);
+}
+
+async function refreshAppSavingsSummary() {
+  if (!savedNet || !savedSource || !savedFiles) {
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/transcode/summary');
+    const data = await response.json();
+    if (!response.ok || !data?.ok) {
+      throw new Error(data?.error || 'Unable to load transcode summary.');
+    }
+    renderAppSavingsSummary(data.summary || {});
+  } catch {
+  }
+}
+
+function updateTranscodeSavingsSummary(results) {
+  if (!transcodeSavingsMeta) {
+    return;
+  }
+
+  const successful = Array.isArray(results)
+    ? results.filter((item) => item?.ok === true && Number.isFinite(item?.sourceSizeBytes) && Number.isFinite(item?.outputSizeBytes))
+    : [];
+
+  if (!successful.length) {
+    transcodeSavingsMeta.classList.remove('d-none');
+    transcodeSavingsMeta.textContent = 'Space saved: unavailable.';
+    return;
+  }
+
+  const totalSourceBytes = successful.reduce((sum, item) => sum + item.sourceSizeBytes, 0);
+  const totalOutputBytes = successful.reduce((sum, item) => sum + item.outputSizeBytes, 0);
+  const totalSavedBytes = totalSourceBytes - totalOutputBytes;
+  const savedPct = totalSourceBytes > 0 ? ((totalSavedBytes / totalSourceBytes) * 100) : 0;
+
+  transcodeSavingsMeta.classList.remove('d-none');
+  if (totalSavedBytes >= 0) {
+    transcodeSavingsMeta.textContent = `Space saved: ${formatMB(totalSavedBytes)} (${savedPct.toFixed(1)}%) across ${successful.length} file(s).`;
+  } else {
+    transcodeSavingsMeta.textContent = `Space change: +${formatMB(Math.abs(totalSavedBytes))} (${Math.abs(savedPct).toFixed(1)}% larger) across ${successful.length} file(s).`;
+  }
+}
+
+function getRowPath(row) {
+  return String(row?.fullPath || row?.filePath || '');
+}
+
+async function refreshRowsAfterTranscode(transcodeResults) {
+  if (!Array.isArray(window._lastAuditRows) || !Array.isArray(transcodeResults) || !transcodeResults.length) {
+    return;
+  }
+
+  const touched = new Set();
+  for (const item of transcodeResults) {
+    if (typeof item?.file === 'string' && item.file.trim()) {
+      touched.add(item.file.trim());
+    }
+    if (typeof item?.output === 'string' && item.output.trim()) {
+      touched.add(item.output.trim());
+    }
+  }
+
+  if (!touched.size) {
+    return;
+  }
+
+  const formData = new FormData(form);
+  const saved = loadSavedAuditSettings();
+  const response = await fetch('/api/audit/files', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      root: rootInput?.value || '.',
+      videoCodec: formData.get('videoCodec') || '',
+      videoBitrateOp: formData.get('videoBitrateOp') || '>=',
+      videoBitrate: formData.get('videoBitrate') ? `${formData.get('videoBitrate')}k` : '',
+      videoBitrateTolerancePct: typeof saved.videoBitrateTolerancePct === 'string' ? saved.videoBitrateTolerancePct : '10',
+      audioCodec: formData.get('audioCodec') || '',
+      audioChannelsOp: formData.get('audioChannelsOp') || '>=',
+      audioChannels: formData.get('audioChannels') || '',
+      files: Array.from(touched)
+    })
+  });
+
+  const payload = await response.json();
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || 'Failed to refresh changed rows.');
+  }
+
+  const refreshedRows = Array.isArray(payload.rows) ? payload.rows : [];
+  const missingFiles = Array.isArray(payload.missingFiles) ? payload.missingFiles : [];
+
+  let mergedRows = Array.isArray(window._lastAuditRows) ? [...window._lastAuditRows] : [];
+  if (missingFiles.length) {
+    const missingSet = new Set(missingFiles.map((filePath) => String(filePath)));
+    mergedRows = mergedRows.filter((row) => !missingSet.has(getRowPath(row)));
+  }
+
+  const refreshedByPath = new Map(refreshedRows.map((row) => [getRowPath(row), row]));
+  mergedRows = mergedRows.map((row) => {
+    const replacement = refreshedByPath.get(getRowPath(row));
+    return replacement ? { ...row, ...replacement } : row;
+  });
+
+  const existingPaths = new Set(mergedRows.map((row) => getRowPath(row)));
+  for (const refreshed of refreshedRows) {
+    const refreshedPath = getRowPath(refreshed);
+    if (!existingPaths.has(refreshedPath)) {
+      mergedRows.push(refreshed);
+      existingPaths.add(refreshedPath);
+    }
+  }
+
+  const resultBySource = new Map();
+  const resultByOutput = new Map();
+  for (const item of transcodeResults) {
+    if (typeof item?.file === 'string' && item.file.trim()) {
+      resultBySource.set(item.file.trim(), item);
+    }
+    if (typeof item?.output === 'string' && item.output.trim()) {
+      resultByOutput.set(item.output.trim(), item);
+    }
+  }
+
+  mergedRows = mergedRows.map((row) => {
+    const rowPath = getRowPath(row);
+    const transcodeResult = resultBySource.get(rowPath) || resultByOutput.get(rowPath);
+    if (!transcodeResult) {
+      return row;
+    }
+    return {
+      ...row,
+      transcodeOutput: transcodeResult.output || row.transcodeOutput,
+      logPath: transcodeResult.logPath || row.logPath
+    };
+  });
+
+  mergedRows.sort((a, b) => {
+    const aSize = Number.isFinite(a?.rawSize) ? a.rawSize : 0;
+    const bSize = Number.isFinite(b?.rawSize) ? b.rawSize : 0;
+    return bSize - aSize;
+  });
+  mergedRows = mergedRows.map((row, index) => ({ ...row, index: index + 1 }));
+
+  renderResultsWithStore(mergedRows, resultsBody, () => {});
+}
+
 function showTranscodeOutput() {
   if (transcodeOutputTimeout) {
     clearTimeout(transcodeOutputTimeout);
@@ -179,6 +478,33 @@ function showTranscodeOutput() {
   }
   transcodeOutputWrap.classList.remove('d-none');
   transcodeOutput.textContent = '';
+  setTranscodeOutputVisibility(false);
+  if (transcodeOverallWrap) {
+    transcodeOverallWrap.classList.remove('d-none');
+  }
+  if (transcodeOverallBar) {
+    transcodeOverallBar.style.width = '0%';
+    transcodeOverallBar.textContent = '0%';
+    transcodeOverallBar.setAttribute('aria-valuenow', '0');
+  }
+  if (transcodeOverallMeta) {
+    transcodeOverallMeta.textContent = 'Preparing queue estimate...';
+  }
+  if (transcodeSavingsMeta) {
+    transcodeSavingsMeta.classList.remove('d-none');
+    transcodeSavingsMeta.textContent = 'Space saved: calculating...';
+  }
+  if (transcodeProgressWrap) {
+    transcodeProgressWrap.classList.remove('d-none');
+  }
+  if (transcodeProgressBar) {
+    transcodeProgressBar.style.width = '0%';
+    transcodeProgressBar.textContent = '0%';
+    transcodeProgressBar.setAttribute('aria-valuenow', '0');
+  }
+  if (transcodeProgressMeta) {
+    transcodeProgressMeta.textContent = 'Preparing transcode...';
+  }
   if (inlineCancelBtn) {
     inlineCancelBtn.classList.remove('d-none');
     inlineCancelBtn.disabled = false;
@@ -193,6 +519,16 @@ function hideTranscodeOutputLater() {
     }
     transcodeOutputWrap.classList.add('d-none');
     transcodeOutput.textContent = '';
+    if (transcodeProgressWrap) {
+      transcodeProgressWrap.classList.add('d-none');
+    }
+    if (transcodeOverallWrap) {
+      transcodeOverallWrap.classList.add('d-none');
+    }
+    if (transcodeSavingsMeta) {
+      transcodeSavingsMeta.classList.add('d-none');
+      transcodeSavingsMeta.textContent = 'Space saved: calculating...';
+    }
     transcodeOutputTimeout = null;
   }, 1200);
 }
@@ -204,86 +540,176 @@ function closeTranscodeEventStream() {
   }
 }
 
+function findResultRowByPath(filePath) {
+  if (!filePath) {
+    return null;
+  }
+  const rows = Array.from(document.querySelectorAll('#results-body tr[data-file-path]'));
+  return rows.find((row) => row.getAttribute('data-file-path') === filePath) || null;
+}
+
+function clearActiveTranscodingRowHighlight() {
+  const rows = document.querySelectorAll('#results-body tr.transcode-active-row');
+  rows.forEach((row) => row.classList.remove('transcode-active-row'));
+}
+
+function setActiveTranscodingRow(filePath) {
+  activeTranscodingFilePath = filePath || null;
+  clearActiveTranscodingRowHighlight();
+  if (!activeTranscodingFilePath) {
+    return;
+  }
+  const row = findResultRowByPath(activeTranscodingFilePath);
+  if (row) {
+    row.classList.add('transcode-active-row');
+  }
+}
+
+function clearTranscodeOutcomeHighlights() {
+  const rows = document.querySelectorAll('#results-body tr.transcode-result-match, #results-body tr.transcode-result-mismatch');
+  rows.forEach((row) => {
+    row.classList.remove('transcode-result-match');
+    row.classList.remove('transcode-result-mismatch');
+  });
+}
+
+function flashTranscodeOutcomeForPath(filePath) {
+  if (!filePath) {
+    return;
+  }
+
+  const targetRow = findResultRowByPath(filePath);
+  if (!targetRow) {
+    return;
+  }
+
+  const rowData = Array.isArray(window._lastAuditRows)
+    ? window._lastAuditRows.find((row) => getRowPath(row) === filePath)
+    : null;
+  if (!rowData) {
+    return;
+  }
+
+  const isMatch = rowData.matches === true;
+  clearTranscodeOutcomeHighlights();
+  targetRow.classList.add(isMatch ? 'transcode-result-match' : 'transcode-result-mismatch');
+
+  setTimeout(() => {
+    targetRow.classList.remove('transcode-result-match');
+    targetRow.classList.remove('transcode-result-mismatch');
+  }, 2500);
+}
+
+function isPowerManagementCondition(text) {
+  const value = String(text || '').toLowerCase();
+  return value.includes('battery')
+    || value.includes('threshold')
+    || value.includes('paused:')
+    || value.includes('resumed:')
+    || value.includes('cannot verify battery');
+}
+
+function notifyTranscodeCondition(text) {
+  if (!text || !isPowerManagementCondition(text)) {
+    return;
+  }
+  const level = String(text).toLowerCase().includes('resumed:') ? 'info' : 'warning';
+  renderMessage(message, level, text);
+}
+
+function renderMessageWithLogLink(container, type, text, logPath) {
+  const safeText = escapeHtml(String(text || '')).replace(/\n/g, '<br />');
+  const href = createLogViewerHref(logPath);
+  const logHtml = href
+    ? ` <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">See log</a>`
+    : '';
+  container.innerHTML = `<div class="alert alert-${type}" role="alert">${safeText}${logHtml}</div>`;
+}
+
 function startTranscodeEventStream() {
   closeTranscodeEventStream();
   transcodeEventSource = new EventSource('/api/transcode/stream');
 
   transcodeEventSource.addEventListener('status', (event) => {
     appendTranscodeOutput(`[status] ${event.data}\n`);
+    notifyTranscodeCondition(event.data);
+  });
+
+  transcodeEventSource.addEventListener('file-start', (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      const file = typeof payload?.file === 'string' ? payload.file : null;
+      if (file) {
+        setActiveTranscodingRow(file);
+      }
+    } catch {
+    }
+  });
+
+  transcodeEventSource.addEventListener('file-complete', (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      if (payload?.file && activeTranscodingFilePath === payload.file) {
+        setActiveTranscodingRow(null);
+      }
+      refreshRowsAfterTranscode([payload])
+        .then(() => {
+          const preferredPath = typeof payload?.output === 'string' && payload.output.trim()
+            ? payload.output.trim()
+            : (typeof payload?.file === 'string' ? payload.file.trim() : '');
+          flashTranscodeOutcomeForPath(preferredPath);
+        })
+        .catch((error) => {
+          appendTranscodeOutput(`[status] Live table update failed: ${error.message}\n`);
+        });
+    } catch {
+    }
+  });
+
+  transcodeEventSource.addEventListener('file-failed', (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      if (payload?.file && activeTranscodingFilePath === payload.file) {
+        setActiveTranscodingRow(null);
+      }
+    } catch {
+    }
   });
 
   transcodeEventSource.addEventListener('log', (event) => {
     appendTranscodeOutput(`${event.data}\n`);
   });
 
+  transcodeEventSource.addEventListener('progress', (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      updateTranscodeProgress(payload);
+    } catch {
+    }
+  });
+
+  transcodeEventSource.addEventListener('overall', (event) => {
+    try {
+      const payload = JSON.parse(event.data);
+      updateTranscodeOverallProgress(payload);
+    } catch {
+    }
+  });
+
   transcodeEventSource.addEventListener('done', (event) => {
     appendTranscodeOutput(`[done] ${event.data}\n`);
+    setActiveTranscodingRow(null);
     closeTranscodeEventStream();
     hideTranscodeOutputLater();
   });
 
   transcodeEventSource.addEventListener('error', () => {
+    setActiveTranscodingRow(null);
     closeTranscodeEventStream();
     hideTranscodeOutputLater();
   });
 }
 
-function formatBytesToGB(bytes) {
-  if (!Number.isFinite(bytes) || bytes < 0) {
-    return '--';
-  }
-  return `${(bytes / (1024 ** 3)).toFixed(1)} GB`;
-}
-
-function formatUptime(seconds) {
-  if (!Number.isFinite(seconds) || seconds < 0) {
-    return '--';
-  }
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  return `${hours}h ${minutes}m`;
-}
-
-async function refreshServerStats() {
-  if (!statCpuUsage || !statCpuTemp || !statBattery || !statMemory || !statUptime) {
-    return;
-  }
-
-  try {
-    const response = await fetch('/api/stats');
-    const data = await response.json();
-    if (!response.ok || !data.ok) {
-      throw new Error(data.error || 'Unable to load stats.');
-    }
-
-    const stats = data.stats || {};
-    statCpuUsage.textContent = Number.isFinite(stats.cpuUsagePercent) ? `${stats.cpuUsagePercent}%` : 'warming up...';
-    statCpuTemp.textContent = Number.isFinite(stats.cpuTempC) ? `${stats.cpuTempC.toFixed(1)}°C` : 'unavailable';
-
-    if (stats.battery?.available) {
-      const percentText = Number.isFinite(stats.battery.percent) ? `${stats.battery.percent}%` : '--';
-      const stateText = stats.battery.state || 'unknown';
-      statBattery.textContent = `${percentText} (${stateText})`;
-    } else {
-      statBattery.textContent = 'unavailable';
-    }
-
-    if (stats.memory) {
-      const used = stats.memory.totalBytes - stats.memory.freeBytes;
-      statMemory.textContent = `${formatBytesToGB(used)} / ${formatBytesToGB(stats.memory.totalBytes)}`;
-    } else {
-      statMemory.textContent = '--';
-    }
-
-    statUptime.textContent = formatUptime(stats.uptimeSeconds);
-  } catch {
-    statCpuUsage.textContent = '--';
-    statCpuTemp.textContent = '--';
-    statBattery.textContent = '--';
-    statMemory.textContent = '--';
-    statUptime.textContent = '--';
-  }
-}
 
 if (inlineCancelBtn) {
   inlineCancelBtn.addEventListener('click', async () => {
@@ -332,48 +758,47 @@ async function syncCodecDropdowns() {
   try {
     const savedSettings = loadSavedAuditSettings();
     applySavedAuditSettings(savedSettings);
+    if (rootInput && (!rootInput.value || !String(rootInput.value).trim())) {
+      rootInput.value = './smoke-fixtures';
+    }
     await syncCodecDropdowns();
-    await loadDirectories(rootInput, rootPicker);
-    if (savedSettings.root) {
-      rootPicker.value = savedSettings.root;
-    }
-    if (savedSettings.root && String(savedSettings.root).trim() && rootSection) {
-      if (globalThis.bootstrap?.Collapse) {
-        const collapse = new globalThis.bootstrap.Collapse(rootSection, { toggle: false });
-        collapse.hide();
-      } else {
-        rootSection.classList.remove('show');
+    if (rootInput && rootPicker) {
+      await loadDirectories(rootInput, rootPicker);
+      if (savedSettings.root) {
+        rootPicker.value = savedSettings.root;
       }
-      updateRootToggleLabel(false);
-    } else {
-      updateRootToggleLabel(true);
     }
-    renderMessage(message, 'info', 'Choose a server folder path, then run the audit.');
+    renderMessage(message, 'info', `Scan files using root folder: ${rootInput?.value || './smoke-fixtures'}.`);
   } catch (error) {
     renderMessage(message, 'danger', error.message);
   }
 })();
 
-refreshServerStats();
-setInterval(refreshServerStats, 5000);
+refreshAppSavingsSummary();
+setInterval(refreshAppSavingsSummary, 5000);
 
 form.addEventListener('change', saveAuditSettings);
 form.addEventListener('input', saveAuditSettings);
 
-rootPicker.addEventListener('change', () => {
-  if (rootPicker.value) {
-    rootInput.value = rootPicker.value;
-  }
-});
+if (rootPicker) {
+  rootPicker.addEventListener('change', () => {
+    if (rootInput && rootPicker.value) {
+      rootInput.value = rootPicker.value;
+      saveAuditSettings();
+    }
+  });
+}
 
-refreshDirsButton.addEventListener('click', async () => {
-  try {
-    await loadDirectories(rootInput, rootPicker);
-    renderMessage(message, 'info', 'Server folder list refreshed.');
-  } catch (error) {
-    renderMessage(message, 'danger', error.message);
-  }
-});
+if (refreshDirsButton) {
+  refreshDirsButton.addEventListener('click', async () => {
+    try {
+      await loadDirectories(rootInput, rootPicker);
+      renderMessage(message, 'info', 'Server folder list refreshed.');
+    } catch (error) {
+      renderMessage(message, 'danger', error.message);
+    }
+  });
+}
 
 // Patch renderResults to store last audit rows for transcode lookup
 import { renderResults as origRenderResults } from './ui.js';
@@ -420,13 +845,20 @@ function setupEnhancements(rows) {
 function renderResultsWithStore(rows, ...args) {
   window._lastAuditRows = rows;
   origRenderResults(rows, resultsBody, setupEnhancements);
+  updateNetSavedFromRows(rows);
+  if (activeTranscodingFilePath) {
+    setActiveTranscodingRow(activeTranscodingFilePath);
+  }
 }
 
 // Use this patched version for audit
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   saveAuditSettings();
-  await runAudit(form, runButton, message, resultsBody, (rows) => renderResultsWithStore(rows, resultsBody, () => {}));
+  await runAudit(form, runButton, message, resultsBody, (rows) => {
+    renderResultsWithStore(rows, resultsBody, () => {});
+    updateOriginalTotalFromRows(rows);
+  });
 });
 
 // In transcodeBtn click handler:
@@ -471,7 +903,7 @@ transcodeBtn.addEventListener('click', async (event) => {
   const audioCodec = formData.get('audioCodec') || '';
   const videoBitrate = formData.get('videoBitrate') || '';
   const audioChannels = formData.get('audioChannels') || '';
-  const deleteOriginal = formData.get('deleteOriginal') === 'on';
+  const deleteOriginal = document.getElementById('delete-original')?.checked === true;
   const savedSettings = loadSavedAuditSettings();
   const transcodeLocation = (savedSettings.transcodeLocation || '').trim();
   const pauseBatteryPct = savedSettings.pauseBatteryPct || '';
@@ -500,28 +932,36 @@ transcodeBtn.addEventListener('click', async (event) => {
       })
     });
     const data = await res.json();
-    if (Array.isArray(data.results) && Array.isArray(window._lastAuditRows)) {
-      const byFile = new Map(data.results.map((item) => [item.file, item]));
-      window._lastAuditRows = window._lastAuditRows.map((row) => {
-        const rowFile = row.fullPath || row.filePath;
-        const transcodeResult = rowFile ? byFile.get(rowFile) : null;
-        if (!transcodeResult) {
-          return row;
-        }
-        return {
-          ...row,
-          transcodeOutput: transcodeResult.output || row.transcodeOutput,
-          logPath: transcodeResult.logPath || row.logPath
-        };
-      });
-      renderResultsWithStore(window._lastAuditRows, resultsBody, () => {});
+    if (Array.isArray(data.results)) {
+      updateTranscodeSavingsSummary(data.results);
     }
-    if (!res.ok || !data.ok) throw new Error(data.error || 'Transcode failed.');
+    if (data?.summary) {
+      renderAppSavingsSummary(data.summary);
+    }
+    if (typeof data?.runLogPath === 'string' && data.runLogPath) {
+      appendTranscodeOutput(`[status] Transcode run log: ${data.runLogPath}\n`);
+    }
+    if (!res.ok || !data.ok) {
+      const failedReasons = Array.isArray(data?.failedReasons) ? data.failedReasons : [];
+      const powerReasons = failedReasons.filter((reason) => isPowerManagementCondition(reason));
+      if (powerReasons.length > 0) {
+        renderMessageWithLogLink(message, 'warning', `Power management blocked transcode: ${powerReasons.join(' | ')}`, data?.runLogPath);
+      } else {
+        renderMessageWithLogLink(message, 'danger', data.error || 'Transcode failed.', data?.runLogPath);
+      }
+      return;
+    }
+    if (Array.isArray(data.results) && data.results.length > 0) {
+      await refreshRowsAfterTranscode(data.results).catch((error) => {
+        appendTranscodeOutput(`[status] Incremental table refresh failed: ${error.message}\n`);
+      });
+    }
     const skippedNote = skippedMatchCount > 0 ? ` Skipped ${skippedMatchCount} MATCH file(s).` : '';
-    renderMessage(message, 'success', `${data.message || 'Transcode started.'}${skippedNote}`);
+    renderMessageWithLogLink(message, 'success', `${data.message || 'Transcode started.'}${skippedNote}`, data?.runLogPath);
   } catch (err) {
-    renderMessage(message, 'danger', err.message);
+    renderMessageWithLogLink(message, 'danger', err.message, null);
   } finally {
+    setActiveTranscodingRow(null);
     hideTranscodeOutputLater();
     closeTranscodeEventStream();
     transcodeBtn.disabled = false;
