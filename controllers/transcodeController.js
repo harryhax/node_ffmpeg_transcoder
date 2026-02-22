@@ -136,6 +136,11 @@ function buildFailLogPathFromOutput(outputPath) {
 const transcodeStreamClients = new Set();
 let transcodeInProgress = false;
 let lastFfmpegProcessPaused = false;
+let latestTranscodeStatusText = null;
+let latestQueuePayloadText = null;
+let latestOverallPayloadText = null;
+let latestProgressPayloadText = null;
+let latestFileStartPayload = null;
 const transcodeSavingsTotals = {
   filesTranscoded: 0,
   attemptedFiles: 0,
@@ -181,13 +186,58 @@ function writeSseEvent(res, event, payload) {
   res.write('\n');
 }
 
+function parseJsonSafe(payloadText) {
+  if (typeof payloadText !== 'string' || !payloadText.trim()) {
+    return null;
+  }
+  try {
+    return JSON.parse(payloadText);
+  } catch {
+    return null;
+  }
+}
+
+function getTranscodeLiveState() {
+  return {
+    inProgress: transcodeInProgress,
+    status: latestTranscodeStatusText,
+    queue: parseJsonSafe(latestQueuePayloadText),
+    overall: parseJsonSafe(latestOverallPayloadText),
+    progress: parseJsonSafe(latestProgressPayloadText),
+    activeFile: latestFileStartPayload
+  };
+}
+
+function resetTranscodeLiveSnapshots() {
+  latestTranscodeStatusText = null;
+  latestQueuePayloadText = null;
+  latestOverallPayloadText = null;
+  latestProgressPayloadText = null;
+  latestFileStartPayload = null;
+}
+
 function broadcastTranscodeEvent(event, payload) {
+  if (event === 'status') {
+    latestTranscodeStatusText = String(payload ?? '');
+  } else if (event === 'queue') {
+    latestQueuePayloadText = String(payload ?? '');
+  } else if (event === 'overall') {
+    latestOverallPayloadText = String(payload ?? '');
+  } else if (event === 'progress') {
+    latestProgressPayloadText = String(payload ?? '');
+  }
+
   for (const client of transcodeStreamClients) {
     writeSseEvent(client, event, payload);
   }
 }
 
 function emitTranscodeFileEvent(event, payload) {
+  if (event === 'file-start') {
+    latestFileStartPayload = payload;
+  } else if ((event === 'file-complete' || event === 'file-failed') && latestFileStartPayload?.file === payload?.file) {
+    latestFileStartPayload = null;
+  }
   broadcastTranscodeEvent(event, JSON.stringify(payload));
 }
 
@@ -577,6 +627,7 @@ const transcode = async (req, res) => {
   }
 
   transcodeInProgress = true;
+  resetTranscodeLiveSnapshots();
   broadcastTranscodeEvent('status', `Transcode started for ${files.length} file(s).`);
 
   const runStartedAtMs = Date.now();
@@ -1060,6 +1111,10 @@ const transcode = async (req, res) => {
   });
 
   transcodeInProgress = false;
+  latestFileStartPayload = null;
+  latestProgressPayloadText = null;
+  latestOverallPayloadText = null;
+  latestQueuePayloadText = null;
   const failed = enrichedResults.filter(r => !r.ok);
   if (failed.length) {
     broadcastTranscodeEvent('done', 'Transcode finished with errors.');
@@ -1093,6 +1148,10 @@ const transcodeSummary = (_req, res) => {
   res.json({ ok: true, summary: getTranscodeSavingsSummary() });
 };
 
+const transcodeState = (_req, res) => {
+  res.json({ ok: true, state: getTranscodeLiveState() });
+};
+
 // SSE endpoint for streaming ffmpeg output
 const transcodeStream = (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
@@ -1101,6 +1160,20 @@ const transcodeStream = (req, res) => {
   res.flushHeaders();
   transcodeStreamClients.add(res);
   writeSseEvent(res, 'status', transcodeInProgress ? 'Transcode in progress.' : 'Connected. Waiting for transcode.');
+  if (transcodeInProgress) {
+    if (latestQueuePayloadText) {
+      writeSseEvent(res, 'queue', latestQueuePayloadText);
+    }
+    if (latestOverallPayloadText) {
+      writeSseEvent(res, 'overall', latestOverallPayloadText);
+    }
+    if (latestProgressPayloadText) {
+      writeSseEvent(res, 'progress', latestProgressPayloadText);
+    }
+    if (latestFileStartPayload) {
+      writeSseEvent(res, 'file-start', JSON.stringify(latestFileStartPayload));
+    }
+  }
   req.on('close', () => {
     transcodeStreamClients.delete(res);
   });
@@ -1123,4 +1196,4 @@ export const transcodeCancel = (req, res) => {
   res.status(400).json({ ok: false, error: 'No transcode in progress.' });
 };
 
-export default { transcode, transcodeStream, transcodeCancel, transcodeSummary };
+export default { transcode, transcodeStream, transcodeCancel, transcodeSummary, transcodeState };

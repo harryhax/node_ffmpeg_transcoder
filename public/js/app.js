@@ -631,6 +631,12 @@ function startTranscodeEventStream() {
   transcodeEventSource = new EventSource('/api/transcode/stream');
 
   transcodeEventSource.addEventListener('status', (event) => {
+    if (typeof event.data === 'string' && event.data.toLowerCase().includes('transcode in progress')) {
+      if (transcodeBtn) {
+        transcodeBtn.disabled = true;
+      }
+      transcodeOutputWrap.classList.remove('d-none');
+    }
     appendTranscodeOutput(`[status] ${event.data}\n`);
     notifyTranscodeCondition(event.data);
   });
@@ -699,15 +705,54 @@ function startTranscodeEventStream() {
   transcodeEventSource.addEventListener('done', (event) => {
     appendTranscodeOutput(`[done] ${event.data}\n`);
     setActiveTranscodingRow(null);
+    if (transcodeBtn) {
+      transcodeBtn.disabled = false;
+    }
     closeTranscodeEventStream();
     hideTranscodeOutputLater();
   });
 
   transcodeEventSource.addEventListener('error', () => {
     setActiveTranscodingRow(null);
+    if (transcodeBtn) {
+      transcodeBtn.disabled = false;
+    }
     closeTranscodeEventStream();
     hideTranscodeOutputLater();
   });
+}
+
+async function recoverTranscodeSessionIfRunning() {
+  try {
+    const response = await fetch('/api/transcode/state');
+    const data = await response.json();
+    if (!response.ok || !data?.ok) {
+      return;
+    }
+
+    const state = data.state || {};
+    if (state.inProgress !== true) {
+      return;
+    }
+
+    showTranscodeOutput();
+    if (transcodeBtn) {
+      transcodeBtn.disabled = true;
+    }
+    if (state.overall) {
+      updateTranscodeOverallProgress(state.overall);
+    }
+    if (state.progress) {
+      updateTranscodeProgress(state.progress);
+    }
+    if (state.activeFile && typeof state.activeFile.file === 'string') {
+      setActiveTranscodingRow(state.activeFile.file);
+    }
+
+    renderMessage(message, 'info', 'Resumed view of running transcode job.');
+    startTranscodeEventStream();
+  } catch {
+  }
 }
 
 
@@ -769,6 +814,7 @@ async function syncCodecDropdowns() {
       }
     }
     renderMessage(message, 'info', `Scan files using root folder: ${rootInput?.value || './smoke-fixtures'}.`);
+    await recoverTranscodeSessionIfRunning();
   } catch (error) {
     renderMessage(message, 'danger', error.message);
   }
