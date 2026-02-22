@@ -16,25 +16,38 @@
   </nav>
   <main class="container py-4">
     <div class="card mb-4">
+      <div class="card-header fw-bold">Server Stats</div>
+      <div class="card-body py-2">
+        <div class="row g-2" id="server-stats-row">
+          <div class="col-md-2 col-6"><strong>CPU:</strong> <span id="stat-cpu-usage">--</span></div>
+          <div class="col-md-2 col-6"><strong>CPU Temp:</strong> <span id="stat-cpu-temp">--</span></div>
+          <div class="col-md-2 col-6"><strong>Battery:</strong> <span id="stat-battery">--</span></div>
+          <div class="col-md-3 col-6"><strong>Memory:</strong> <span id="stat-memory">--</span></div>
+          <div class="col-md-3 col-12"><strong>Uptime:</strong> <span id="stat-uptime">--</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mb-4">
       <div class="card-header fw-bold">Detect</div>
       <div class="card-body">
         <form id="audit-form" class="row g-3 align-items-end">
           <div class="col-12">
-            <label for="root" class="form-label">Root folder (server path)</label>
-            <input id="root" class="form-control" name="root" value="./smoke-fixtures" placeholder="/Users/yourname/Videos or ./smoke-fixtures" required />
-            <div class="form-text">This must be a path on the machine running this server (not your browser's local sandbox).</div>
-            <div class="d-flex gap-2 mt-2">
-              <select id="root-picker" class="form-select">
-                <option value="">Select a discovered server folder...</option>
-              </select>
-              <button id="refresh-dirs" class="btn btn-outline-secondary" type="button">Refresh Folders</button>
+            <div class="d-flex align-items-center justify-content-between mb-2">
+              <label for="root" class="form-label mb-0">Root folder (server path)</label>
+              <button id="toggle-root-section" class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#root-section" aria-expanded="true" aria-controls="root-section">Hide</button>
             </div>
-            <div class="form-text">Tip: pick from the dropdown or type/paste the full server path directly.</div>
-          </div>
-          <div class="col-12 mt-2">
-            <label for="transcode-location" class="form-label">Transcode location (server folder)</label>
-            <input id="transcode-location" class="form-control" name="transcodeLocation" placeholder="/tmp/transcode or /Users/yourname/TranscodeTemp" />
-            <div class="form-text">Optional: If set, files will be copied here for transcoding, then copied back to the original folder after completion.</div>
+            <div id="root-section" class="collapse show">
+              <input id="root" class="form-control" name="root" value="./smoke-fixtures" placeholder="/Users/yourname/Videos or ./smoke-fixtures" required />
+              <div class="form-text">This must be a path on the machine running this server (not your browser's local sandbox).</div>
+              <div class="d-flex gap-2 mt-2">
+                <select id="root-picker" class="form-select">
+                  <option value="">Select a discovered server folder...</option>
+                </select>
+                <button id="refresh-dirs" class="btn btn-outline-secondary" type="button">Refresh Folders</button>
+              </div>
+              <div class="form-text">Tip: pick from the dropdown or type/paste the full server path directly.</div>
+            </div>
           </div>
           <div class="col-md-3">
             <label for="videoCodec" class="form-label">Video codec</label>
@@ -80,7 +93,6 @@
           <div class="col-12 d-flex gap-2 align-items-center">
             <button id="run-btn" class="btn btn-primary" type="submit">Run Audit</button>
             <button id="transcode-btn" class="btn btn-success" type="button">Transcode</button>
-            <button id="cancel-btn" class="btn btn-danger ms-2" type="button">Cancel</button>
             <div class="form-check ms-3">
               <input class="form-check-input" type="checkbox" id="delete-original" name="deleteOriginal" />
               <label class="form-check-label" for="delete-original">Delete original file after transcode</label>

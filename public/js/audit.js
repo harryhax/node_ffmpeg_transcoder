@@ -1,6 +1,25 @@
 import { renderMessage } from './utils.js';
 import { setSelectOptions, renderResults } from './ui.js';
 
+const AUDIT_SETTINGS_KEY = 'auditFormSettings';
+
+function readSavedBitrateTolerancePct() {
+  try {
+    const raw = globalThis.localStorage?.getItem(AUDIT_SETTINGS_KEY);
+    if (!raw) {
+      return '10';
+    }
+    const parsed = JSON.parse(raw);
+    const value = parsed?.videoBitrateTolerancePct;
+    if (typeof value !== 'string') {
+      return '10';
+    }
+    return value;
+  } catch {
+    return '10';
+  }
+}
+
 export async function loadCodecs(videoCodecSelect, audioCodecSelect) {
   const response = await fetch('/api/options/codecs');
   const data = await response.json();
@@ -30,6 +49,7 @@ export async function runAudit(form, runButton, message, resultsBody, renderResu
     videoCodec: formData.get('videoCodec') || '',
     videoBitrateOp: formData.get('videoBitrateOp') || '>=',
     videoBitrate: formData.get('videoBitrate') ? `${formData.get('videoBitrate')}k` : '',
+    videoBitrateTolerancePct: readSavedBitrateTolerancePct(),
     audioCodec: formData.get('audioCodec') || '',
     audioChannelsOp: formData.get('audioChannelsOp') || '>=',
     audioChannels: formData.get('audioChannels') || ''

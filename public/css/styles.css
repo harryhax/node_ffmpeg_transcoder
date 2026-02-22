@@ -1,5 +1,25 @@
 body {
-  background: #f8f9fa;
+  background: #2b3038;
+}
+
+.navbar {
+  background: #1f242b !important;
+  border-bottom: 1px solid #343a40;
+}
+
+.navbar .navbar-brand {
+  color: #e9ecef;
+}
+
+.navbar .btn-outline-secondary {
+  color: #dee2e6;
+  border-color: #6c757d;
+}
+
+.navbar .btn-outline-secondary:hover {
+  background: #495057;
+  color: #fff;
+  border-color: #6c757d;
 }
 
 .sort-icon {
@@ -13,7 +33,7 @@ body {
 
 .card,
 .table-responsive {
-  background: #fff;
+  background: #d7dce3;
   border-radius: 0.5rem;
 }
 
@@ -31,8 +51,25 @@ body {
   background: #f8f9fa;
 }
 
-.btn-outline-primary .bi-info-circle {
+.details-icon-btn {
+  border: 0;
+  background: transparent;
+  color: var(--bs-primary);
+  padding: 0;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.details-icon-btn:hover,
+.details-icon-btn:focus {
+  color: var(--bs-primary-text-emphasis);
+}
+
+.details-icon-btn .bi-info-circle-fill {
   vertical-align: middle;
+  transform: none;
 }
 
 #detailsFilePath {

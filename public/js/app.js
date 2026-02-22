@@ -50,15 +50,20 @@ function loadSavedAuditSettings() {
 function saveAuditSettings() {
   if (!form) return;
   const data = new FormData(form);
+  const existing = loadSavedAuditSettings();
   const payload = {
     root: data.get('root') || '',
-    transcodeLocation: data.get('transcodeLocation') || '',
+    transcodeLocation: typeof existing.transcodeLocation === 'string' ? existing.transcodeLocation : '',
     videoCodec: data.get('videoCodec') || '',
     videoBitrateOp: data.get('videoBitrateOp') || '>=',
     videoBitrate: data.get('videoBitrate') || '',
+    videoBitrateTolerancePct: typeof existing.videoBitrateTolerancePct === 'string' ? existing.videoBitrateTolerancePct : '10',
     audioCodec: data.get('audioCodec') || '',
     audioChannelsOp: data.get('audioChannelsOp') || '>=',
     audioChannels: data.get('audioChannels') || '',
+    pauseBatteryPct: typeof existing.pauseBatteryPct === 'string' ? existing.pauseBatteryPct : '',
+    startBatteryPct: typeof existing.startBatteryPct === 'string' ? existing.startBatteryPct : '',
+    saveTranscodeLog: existing.saveTranscodeLog === true,
     deleteOriginal: data.get('deleteOriginal') === 'on'
   };
   globalThis.localStorage?.setItem(AUDIT_SETTINGS_KEY, JSON.stringify(payload));
@@ -70,11 +75,6 @@ function applySavedAuditSettings(settings) {
     rootInput.value = settings.root;
   }
 
-  const transcodeLocationInput = document.getElementById('transcode-location');
-  if (transcodeLocationInput && typeof settings.transcodeLocation === 'string') {
-    transcodeLocationInput.value = settings.transcodeLocation;
-  }
-
   const videoBitrateOpInput = document.getElementById('videoBitrateOp');
   if (videoBitrateOpInput && typeof settings.videoBitrateOp === 'string') {
     videoBitrateOpInput.value = settings.videoBitrateOp;
@@ -83,6 +83,11 @@ function applySavedAuditSettings(settings) {
   const videoBitrateInput = document.getElementById('videoBitrate');
   if (videoBitrateInput && typeof settings.videoBitrate === 'string') {
     videoBitrateInput.value = settings.videoBitrate;
+  }
+
+  const pauseBatteryPctInput = document.getElementById('pause-battery-pct');
+  if (pauseBatteryPctInput && typeof settings.pauseBatteryPct === 'string') {
+    pauseBatteryPctInput.value = settings.pauseBatteryPct;
   }
 
   const audioChannelsOpInput = document.getElementById('audioChannelsOp');
@@ -108,12 +113,34 @@ const message = document.getElementById('message');
 const resultsBody = document.getElementById('results-body');
 const rootInput = document.getElementById('root');
 const rootPicker = document.getElementById('root-picker');
+const rootSection = document.getElementById('root-section');
+const toggleRootSectionButton = document.getElementById('toggle-root-section');
 const refreshDirsButton = document.getElementById('refresh-dirs');
 const videoCodecSelect = document.getElementById('videoCodec');
 const audioCodecSelect = document.getElementById('audioCodec');
 const transcodeBtn = document.getElementById('transcode-btn');
 const selectAllCheckbox = document.getElementById('select-all-checkbox');
-const cancelBtn = document.getElementById('cancel-btn');
+const statCpuUsage = document.getElementById('stat-cpu-usage');
+const statCpuTemp = document.getElementById('stat-cpu-temp');
+const statBattery = document.getElementById('stat-battery');
+const statMemory = document.getElementById('stat-memory');
+const statUptime = document.getElementById('stat-uptime');
+
+function updateRootToggleLabel(isExpanded) {
+  if (!toggleRootSectionButton) {
+    return;
+  }
+  toggleRootSectionButton.textContent = isExpanded ? 'Hide' : 'Show';
+}
+
+if (rootSection && toggleRootSectionButton) {
+  rootSection.addEventListener('shown.bs.collapse', () => {
+    updateRootToggleLabel(true);
+  });
+  rootSection.addEventListener('hidden.bs.collapse', () => {
+    updateRootToggleLabel(false);
+  });
+}
 
 let transcodeEventSource = null;
 let transcodeOutputTimeout = null;
@@ -122,7 +149,10 @@ const transcodeOutputWrap = document.createElement('div');
 transcodeOutputWrap.className = 'mt-3 d-none';
 transcodeOutputWrap.innerHTML = `
   <div class="card border-secondary">
-    <div class="card-header py-2">Transcode Progress</div>
+    <div class="card-header py-2 d-flex align-items-center justify-content-between">
+      <span>Transcode Progress</span>
+      <button id="transcode-cancel-inline" class="btn btn-sm btn-danger d-none" type="button">Cancel</button>
+    </div>
     <div class="card-body py-2">
       <pre id="transcode-output" class="mb-0" style="max-height: 240px; overflow: auto; white-space: pre-wrap;"></pre>
     </div>
@@ -130,6 +160,7 @@ transcodeOutputWrap.innerHTML = `
 `;
 message.insertAdjacentElement('afterend', transcodeOutputWrap);
 const transcodeOutput = transcodeOutputWrap.querySelector('#transcode-output');
+const inlineCancelBtn = transcodeOutputWrap.querySelector('#transcode-cancel-inline');
 
 function appendTranscodeOutput(text) {
   if (!transcodeOutput) {
@@ -148,10 +179,18 @@ function showTranscodeOutput() {
   }
   transcodeOutputWrap.classList.remove('d-none');
   transcodeOutput.textContent = '';
+  if (inlineCancelBtn) {
+    inlineCancelBtn.classList.remove('d-none');
+    inlineCancelBtn.disabled = false;
+  }
 }
 
 function hideTranscodeOutputLater() {
   transcodeOutputTimeout = setTimeout(() => {
+    if (inlineCancelBtn) {
+      inlineCancelBtn.classList.add('d-none');
+      inlineCancelBtn.disabled = false;
+    }
     transcodeOutputWrap.classList.add('d-none');
     transcodeOutput.textContent = '';
     transcodeOutputTimeout = null;
@@ -189,9 +228,66 @@ function startTranscodeEventStream() {
   });
 }
 
-if (cancelBtn) {
-  cancelBtn.addEventListener('click', async () => {
-    cancelBtn.disabled = true;
+function formatBytesToGB(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    return '--';
+  }
+  return `${(bytes / (1024 ** 3)).toFixed(1)} GB`;
+}
+
+function formatUptime(seconds) {
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return '--';
+  }
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${hours}h ${minutes}m`;
+}
+
+async function refreshServerStats() {
+  if (!statCpuUsage || !statCpuTemp || !statBattery || !statMemory || !statUptime) {
+    return;
+  }
+
+  try {
+    const response = await fetch('/api/stats');
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || 'Unable to load stats.');
+    }
+
+    const stats = data.stats || {};
+    statCpuUsage.textContent = Number.isFinite(stats.cpuUsagePercent) ? `${stats.cpuUsagePercent}%` : 'warming up...';
+    statCpuTemp.textContent = Number.isFinite(stats.cpuTempC) ? `${stats.cpuTempC.toFixed(1)}°C` : 'unavailable';
+
+    if (stats.battery?.available) {
+      const percentText = Number.isFinite(stats.battery.percent) ? `${stats.battery.percent}%` : '--';
+      const stateText = stats.battery.state || 'unknown';
+      statBattery.textContent = `${percentText} (${stateText})`;
+    } else {
+      statBattery.textContent = 'unavailable';
+    }
+
+    if (stats.memory) {
+      const used = stats.memory.totalBytes - stats.memory.freeBytes;
+      statMemory.textContent = `${formatBytesToGB(used)} / ${formatBytesToGB(stats.memory.totalBytes)}`;
+    } else {
+      statMemory.textContent = '--';
+    }
+
+    statUptime.textContent = formatUptime(stats.uptimeSeconds);
+  } catch {
+    statCpuUsage.textContent = '--';
+    statCpuTemp.textContent = '--';
+    statBattery.textContent = '--';
+    statMemory.textContent = '--';
+    statUptime.textContent = '--';
+  }
+}
+
+if (inlineCancelBtn) {
+  inlineCancelBtn.addEventListener('click', async () => {
+    inlineCancelBtn.disabled = true;
     renderMessage(message, 'info', 'Cancelling transcode...');
     try {
       const res = await fetch('/api/transcode/cancel', { method: 'POST' });
@@ -201,7 +297,7 @@ if (cancelBtn) {
     } catch (err) {
       renderMessage(message, 'danger', err.message);
     } finally {
-      cancelBtn.disabled = false;
+      inlineCancelBtn.disabled = false;
     }
   });
 }
@@ -241,11 +337,25 @@ async function syncCodecDropdowns() {
     if (savedSettings.root) {
       rootPicker.value = savedSettings.root;
     }
+    if (savedSettings.root && String(savedSettings.root).trim() && rootSection) {
+      if (globalThis.bootstrap?.Collapse) {
+        const collapse = new globalThis.bootstrap.Collapse(rootSection, { toggle: false });
+        collapse.hide();
+      } else {
+        rootSection.classList.remove('show');
+      }
+      updateRootToggleLabel(false);
+    } else {
+      updateRootToggleLabel(true);
+    }
     renderMessage(message, 'info', 'Choose a server folder path, then run the audit.');
   } catch (error) {
     renderMessage(message, 'danger', error.message);
   }
 })();
+
+refreshServerStats();
+setInterval(refreshServerStats, 5000);
 
 form.addEventListener('change', saveAuditSettings);
 form.addEventListener('input', saveAuditSettings);
@@ -362,7 +472,11 @@ transcodeBtn.addEventListener('click', async (event) => {
   const videoBitrate = formData.get('videoBitrate') || '';
   const audioChannels = formData.get('audioChannels') || '';
   const deleteOriginal = formData.get('deleteOriginal') === 'on';
-  const transcodeLocation = formData.get('transcodeLocation') || '';
+  const savedSettings = loadSavedAuditSettings();
+  const transcodeLocation = (savedSettings.transcodeLocation || '').trim();
+  const pauseBatteryPct = savedSettings.pauseBatteryPct || '';
+  const startBatteryPct = savedSettings.startBatteryPct || '';
+  const saveTranscodeLog = savedSettings.saveTranscodeLog === true;
   saveAuditSettings();
   // Send to backend
   transcodeBtn.disabled = true;
@@ -379,10 +493,29 @@ transcodeBtn.addEventListener('click', async (event) => {
         videoBitrate,
         audioChannels,
         deleteOriginal,
-        transcodeLocation
+        transcodeLocation,
+        pauseBatteryPct,
+        startBatteryPct,
+        saveTranscodeLog
       })
     });
     const data = await res.json();
+    if (Array.isArray(data.results) && Array.isArray(window._lastAuditRows)) {
+      const byFile = new Map(data.results.map((item) => [item.file, item]));
+      window._lastAuditRows = window._lastAuditRows.map((row) => {
+        const rowFile = row.fullPath || row.filePath;
+        const transcodeResult = rowFile ? byFile.get(rowFile) : null;
+        if (!transcodeResult) {
+          return row;
+        }
+        return {
+          ...row,
+          transcodeOutput: transcodeResult.output || row.transcodeOutput,
+          logPath: transcodeResult.logPath || row.logPath
+        };
+      });
+      renderResultsWithStore(window._lastAuditRows, resultsBody, () => {});
+    }
     if (!res.ok || !data.ok) throw new Error(data.error || 'Transcode failed.');
     const skippedNote = skippedMatchCount > 0 ? ` Skipped ${skippedMatchCount} MATCH file(s).` : '';
     renderMessage(message, 'success', `${data.message || 'Transcode started.'}${skippedNote}`);

@@ -65,6 +65,16 @@ export function renderResults(rows, resultsBody, setupEnhancements) {
     const safeVideoBitrate = row.videoBitrate || 'unknown';
     const safeAudioCodec = row.audioCodec || 'unknown';
     const safeAudioChannels = row.audioChannels ?? 'unknown';
+    const logHref = row.logPath ? `file://${encodeURI(String(row.logPath))}` : '';
+    const logAction = row.logPath
+      ? `<a class="btn btn-sm details-icon-btn" href="${escapeHtml(logHref)}" target="_blank" rel="noopener noreferrer" title="Open log file" aria-label="Open log file">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="bi bi-link-45deg" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M4.715 6.542a3.5 3.5 0 0 1 0-4.95l1.6-1.6a3.5 3.5 0 0 1 4.95 4.95l-.611.611a.5.5 0 0 1-.708-.708l.611-.611a2.5 2.5 0 0 0-3.536-3.536l-1.6 1.6a2.5 2.5 0 0 0 0 3.536.5.5 0 0 1-.706.708z"/>
+              <path d="M6.586 10.461a.5.5 0 0 1 .708 0 2.5 2.5 0 0 0 3.536 0l1.6-1.6a2.5 2.5 0 1 0-3.536-3.536l-.611.611a.5.5 0 1 1-.708-.708l.611-.611a3.5 3.5 0 0 1 4.95 4.95l-1.6 1.6a3.5 3.5 0 0 1-4.95 0 .5.5 0 0 1 0-.708z"/>
+              <path d="M5.354 10.646a.5.5 0 0 1 0-.707l5-5a.5.5 0 1 1 .707.707l-5 5a.5.5 0 0 1-.707 0z"/>
+            </svg>
+          </a>`
+      : '';
     return `
       <tr class="${rowClass}">
         <td data-sort="${row.index}">${row.index}</td>
@@ -79,13 +89,14 @@ export function renderResults(rows, resultsBody, setupEnhancements) {
           <span data-bs-toggle="tooltip" data-bs-title="${escapeHtml(fullPath)}">${escapeHtml(truncateText(fileName))}</span>
         </td>
         <td>
-          <button type="button" class="btn btn-sm btn-outline-primary d-flex align-items-center justify-content-center" data-row-index="${row.index - 1}" title="Show details"${detailsDisabled} aria-label="Show details">
-            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="bi bi-info-circle" viewBox="0 0 16 16">
-              <path d="M8 15A7 7 0 1 0 8 1a7 7 0 0 0 0 14zm0 1A8 8 0 1 1 8 0a8 8 0 0 1 0 16z"/>
-              <path d="m8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 .877-.252 1.02-.797l.088-.416c.066-.3.115-.347.36-.347h.318l.082-.38-1.738-.287c-.294-.07-.352-.176-.288-.469l.738-3.468c.194-.897-.105-1.319-.808-1.319-.545 0-.877.252-1.02.797l-.088.416c-.066.3-.115.347-.36.347h-.318l-.082.38 1.738.287z"/>
-              <circle cx="8" cy="4.5" r="1"/>
+          <div class="d-inline-flex align-items-center gap-1">
+          <button type="button" class="btn btn-sm details-icon-btn" data-row-index="${row.index - 1}" title="Show details"${detailsDisabled} aria-label="Show details">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="bi bi-file-earmark-code-fill" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path d="M9.293 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.707L9.293 0zM9.5 3.5V1.707L12.293 4.5H10.5a1 1 0 0 1-1-1zM8.646 9.146a.5.5 0 1 1 .708.708L8.207 11l1.147 1.146a.5.5 0 0 1-.708.708l-1.5-1.5a.5.5 0 0 1 0-.708l1.5-1.5zm-2.5 0a.5.5 0 0 1 .708 0l1.5 1.5a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 1 1-.708-.708L7.293 11 6.146 9.854a.5.5 0 0 1 0-.708z"/>
             </svg>
           </button>
+          ${logAction}
+          </div>
         </td>
         <td><input type="checkbox" class="row-checkbox" data-row-index="${idx}" /></td>
       </tr>

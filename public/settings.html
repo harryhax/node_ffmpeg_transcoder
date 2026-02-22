@@ -30,6 +30,45 @@
     </div>
 
     <div class="card mb-4">
+      <div class="card-header fw-bold">Advanced Defaults</div>
+      <div class="card-body">
+        <div class="mb-3">
+          <label for="transcode-location-setting" class="form-label">Transcode location (server folder)</label>
+          <input id="transcode-location-setting" class="form-control" type="text" placeholder="/tmp/transcode or /Users/yourname/TranscodeTemp" />
+          <div class="form-text">Optional. If set, files are copied here for transcoding, then copied back after completion.</div>
+        </div>
+        <div class="mb-2">
+          <label for="video-bitrate-tolerance-setting" class="form-label">Video bitrate tolerance for "about (=)"</label>
+          <div class="input-group" style="max-width: 260px;">
+            <input id="video-bitrate-tolerance-setting" class="form-control" type="number" min="0" max="100" step="1" value="10" />
+            <span class="input-group-text">%</span>
+          </div>
+        </div>
+        <div class="mb-2">
+          <label for="pause-battery-pct-setting" class="form-label">Pause transcode if battery is at or below</label>
+          <div class="input-group" style="max-width: 260px;">
+            <input id="pause-battery-pct-setting" class="form-control" type="number" min="1" max="99" step="1" placeholder="optional" />
+            <span class="input-group-text">%</span>
+          </div>
+        </div>
+        <div class="mb-2">
+          <label for="start-battery-pct-setting" class="form-label">Start transcode only if battery is above</label>
+          <div class="input-group" style="max-width: 260px;">
+            <input id="start-battery-pct-setting" class="form-control" type="number" min="1" max="99" step="1" placeholder="optional" />
+            <span class="input-group-text">%</span>
+          </div>
+        </div>
+        <div class="form-check mt-3">
+          <input class="form-check-input" type="checkbox" id="save-transcode-log-setting" />
+          <label class="form-check-label" for="save-transcode-log-setting">
+            Save per-file transcode log (.log)
+          </label>
+        </div>
+        <div id="advanced-setting-status" class="form-text mt-2"></div>
+      </div>
+    </div>
+
+    <div class="card mb-4">
       <div class="card-header fw-bold">Smoke Test Generator</div>
       <div class="card-body">
         <form id="smoke-form" class="row g-3 align-items-end">

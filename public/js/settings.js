@@ -1,7 +1,38 @@
 const CODEC_VISIBILITY_KEY = 'codecVisibilityMode';
+const AUDIT_SETTINGS_KEY = 'auditFormSettings';
 
 const showCommonCodecsCheckbox = document.getElementById('show-common-codecs');
 const codecSettingStatus = document.getElementById('codec-setting-status');
+const transcodeLocationSetting = document.getElementById('transcode-location-setting');
+const videoBitrateToleranceSetting = document.getElementById('video-bitrate-tolerance-setting');
+const pauseBatteryPctSetting = document.getElementById('pause-battery-pct-setting');
+const startBatteryPctSetting = document.getElementById('start-battery-pct-setting');
+const saveTranscodeLogSetting = document.getElementById('save-transcode-log-setting');
+const advancedSettingStatus = document.getElementById('advanced-setting-status');
+
+function loadAuditSettings() {
+  try {
+    const raw = globalThis.localStorage?.getItem(AUDIT_SETTINGS_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveAuditSettingsPatch(patch) {
+  const current = loadAuditSettings();
+  const merged = { ...current, ...patch };
+  globalThis.localStorage?.setItem(AUDIT_SETTINGS_KEY, JSON.stringify(merged));
+}
+
+function renderAdvancedSettingStatus() {
+  if (!advancedSettingStatus) {
+    return;
+  }
+  advancedSettingStatus.textContent = 'Saved. These defaults are used by the audit/transcode page.';
+}
 
 function getCodecVisibilityMode() {
   return globalThis.localStorage?.getItem(CODEC_VISIBILITY_KEY) || 'all';
@@ -31,6 +62,74 @@ if (showCommonCodecsCheckbox) {
     setCodecVisibilityMode(checked ? 'common' : 'all');
     renderCodecSettingStatus(checked);
   });
+}
+
+{
+  const saved = loadAuditSettings();
+  if (transcodeLocationSetting) {
+    transcodeLocationSetting.value = typeof saved.transcodeLocation === 'string' ? saved.transcodeLocation : '';
+    transcodeLocationSetting.addEventListener('input', () => {
+      saveAuditSettingsPatch({ transcodeLocation: transcodeLocationSetting.value.trim() });
+      renderAdvancedSettingStatus();
+    });
+  }
+
+  if (videoBitrateToleranceSetting) {
+    videoBitrateToleranceSetting.value = typeof saved.videoBitrateTolerancePct === 'string'
+      ? saved.videoBitrateTolerancePct
+      : '10';
+    videoBitrateToleranceSetting.addEventListener('input', () => {
+      const value = Number.parseInt(videoBitrateToleranceSetting.value || '10', 10);
+      const safe = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 10;
+      videoBitrateToleranceSetting.value = String(safe);
+      saveAuditSettingsPatch({ videoBitrateTolerancePct: String(safe) });
+      renderAdvancedSettingStatus();
+    });
+  }
+
+  if (pauseBatteryPctSetting) {
+    pauseBatteryPctSetting.value = typeof saved.pauseBatteryPct === 'string' ? saved.pauseBatteryPct : '';
+    pauseBatteryPctSetting.addEventListener('input', () => {
+      const raw = pauseBatteryPctSetting.value.trim();
+      if (raw === '') {
+        saveAuditSettingsPatch({ pauseBatteryPct: '' });
+        renderAdvancedSettingStatus();
+        return;
+      }
+
+      const value = Number.parseInt(raw, 10);
+      const safe = Number.isFinite(value) ? Math.max(1, Math.min(99, value)) : 1;
+      pauseBatteryPctSetting.value = String(safe);
+      saveAuditSettingsPatch({ pauseBatteryPct: String(safe) });
+      renderAdvancedSettingStatus();
+    });
+  }
+
+  if (startBatteryPctSetting) {
+    startBatteryPctSetting.value = typeof saved.startBatteryPct === 'string' ? saved.startBatteryPct : '';
+    startBatteryPctSetting.addEventListener('input', () => {
+      const raw = startBatteryPctSetting.value.trim();
+      if (raw === '') {
+        saveAuditSettingsPatch({ startBatteryPct: '' });
+        renderAdvancedSettingStatus();
+        return;
+      }
+
+      const value = Number.parseInt(raw, 10);
+      const safe = Number.isFinite(value) ? Math.max(1, Math.min(99, value)) : 1;
+      startBatteryPctSetting.value = String(safe);
+      saveAuditSettingsPatch({ startBatteryPct: String(safe) });
+      renderAdvancedSettingStatus();
+    });
+  }
+
+  if (saveTranscodeLogSetting) {
+    saveTranscodeLogSetting.checked = saved.saveTranscodeLog === true;
+    saveTranscodeLogSetting.addEventListener('change', () => {
+      saveAuditSettingsPatch({ saveTranscodeLog: saveTranscodeLogSetting.checked });
+      renderAdvancedSettingStatus();
+    });
+  }
 }
 
 const smokeForm = document.getElementById('smoke-form');

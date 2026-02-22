@@ -5,6 +5,7 @@ import auditRoutes from './routes/audit.js';
 import optionsRoutes from './routes/options.js';
 import smokeTestRoutes from './routes/smokeTest.js';
 import transcodeRoutes from './routes/transcode.js';
+import statsRoutes from './routes/stats.js';
 
 const app = express();
 const port = Number.parseInt(process.env.PORT || '3000', 10);
@@ -19,6 +20,7 @@ app.use('/api', auditRoutes);
 app.use('/api/options', optionsRoutes);
 app.use('/api', smokeTestRoutes);
 app.use('/api/transcode', transcodeRoutes);
+app.use('/api/stats', statsRoutes);
 
 app.get('/', (_req, res) => {
   res.sendFile(path.join(publicDir, 'index.html'));

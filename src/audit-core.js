@@ -64,7 +64,12 @@ export async function collectVideoFiles(rootDir) {
         if (VIDEO_EXTENSIONS.has(ext)) {
           try {
             const stat = await fs.stat(fullPath);
-            files.push({ path: fullPath, size: stat.size });
+            files.push({
+              path: fullPath,
+              size: stat.size,
+              mtimeMs: stat.mtimeMs,
+              ctimeMs: stat.ctimeMs
+            });
           } catch {
           }
         }
@@ -184,7 +189,10 @@ function evaluateMatch(target, actual) {
       checks.videoBitrate = false;
       mismatches.push(`video bitrate rule ${bitrateOperator} ${formatBps(target.videoBitrate)} but actual bitrate is unknown`);
     } else {
-      const tolerance = Math.max(100_000, Math.round(target.videoBitrate * 0.1));
+      const tolerancePercent = Number.isFinite(target.videoBitrateTolerancePct)
+        ? target.videoBitrateTolerancePct
+        : 10;
+      const tolerance = Math.round(target.videoBitrate * (tolerancePercent / 100));
       const passed = compareNumber(actual.videoBitrate, target.videoBitrate, bitrateOperator, tolerance);
       checks.videoBitrate = passed;
       if (!passed) {
@@ -193,7 +201,7 @@ function evaluateMatch(target, actual) {
         } else if (bitrateOperator === '<=') {
           mismatches.push(`video bitrate ${formatBps(actual.videoBitrate)} is above maximum ${formatBps(target.videoBitrate)}`);
         } else {
-          mismatches.push(`video bitrate expected≈${formatBps(target.videoBitrate)} actual=${formatBps(actual.videoBitrate)}`);
+          mismatches.push(`video bitrate expected≈${formatBps(target.videoBitrate)} (±${tolerancePercent}%) actual=${formatBps(actual.videoBitrate)}`);
         }
       }
     }
