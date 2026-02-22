@@ -133,10 +133,10 @@ function normalizeOperator(operator) {
 
 function compareNumber(actual, expected, operator, tolerance = 0) {
   if (operator === '>=') {
-    return actual >= expected;
+    return actual >= (expected - tolerance);
   }
   if (operator === '<=') {
-    return actual <= expected;
+    return actual <= (expected + tolerance);
   }
   return Math.abs(actual - expected) <= tolerance;
 }
@@ -197,9 +197,11 @@ function evaluateMatch(target, actual) {
       checks.videoBitrate = passed;
       if (!passed) {
         if (bitrateOperator === '>=') {
-          mismatches.push(`video bitrate ${formatBps(actual.videoBitrate)} is below minimum ${formatBps(target.videoBitrate)}`);
+          const effectiveMin = Math.max(0, target.videoBitrate - tolerance);
+          mismatches.push(`video bitrate ${formatBps(actual.videoBitrate)} is below minimum ${formatBps(effectiveMin)} (target ${formatBps(target.videoBitrate)}, ±${tolerancePercent}%)`);
         } else if (bitrateOperator === '<=') {
-          mismatches.push(`video bitrate ${formatBps(actual.videoBitrate)} is above maximum ${formatBps(target.videoBitrate)}`);
+          const effectiveMax = target.videoBitrate + tolerance;
+          mismatches.push(`video bitrate ${formatBps(actual.videoBitrate)} is above maximum ${formatBps(effectiveMax)} (target ${formatBps(target.videoBitrate)}, ±${tolerancePercent}%)`);
         } else {
           mismatches.push(`video bitrate expected≈${formatBps(target.videoBitrate)} (±${tolerancePercent}%) actual=${formatBps(actual.videoBitrate)}`);
         }
