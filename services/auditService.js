@@ -2,6 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { Worker } from 'node:worker_threads';
 import { inspectWithFallback, normalizeBitrateToBps } from '../src/audit-core.js';
+import { getFfprobeCommand } from './optionsService.js';
 
 const VALID_OPERATORS = new Set(['>=', '<=', '=']);
 
@@ -59,7 +60,8 @@ export function buildCriteria(input) {
     videoBitrateTolerancePct: Number.parseFloat(input.videoBitrateTolerancePct ?? '10'),
     audioCodec: input.audioCodec ? String(input.audioCodec).trim().toLowerCase() : undefined,
     audioChannels: input.audioChannels ? Number.parseInt(input.audioChannels, 10) : undefined,
-    audioChannelsOp
+    audioChannelsOp,
+    ffprobeCommand: getFfprobeCommand()
   };
 
   if (!Number.isFinite(criteria.videoBitrateTolerancePct) || criteria.videoBitrateTolerancePct < 0 || criteria.videoBitrateTolerancePct > 100) {

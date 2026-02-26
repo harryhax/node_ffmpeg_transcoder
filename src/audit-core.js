@@ -81,10 +81,10 @@ export async function collectVideoFiles(rootDir) {
   return files;
 }
 
-function runFfprobe(filePath) {
+function runFfprobe(filePath, ffprobeCommand = 'ffprobe') {
   return new Promise((resolve, reject) => {
     const args = ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', filePath];
-    const child = spawn('ffprobe', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(ffprobeCommand, args, { stdio: ['ignore', 'pipe', 'pipe'] });
 
     let out = '';
     let err = '';
@@ -133,10 +133,10 @@ function normalizeOperator(operator) {
 
 function compareNumber(actual, expected, operator, tolerance = 0) {
   if (operator === '>=') {
-    return actual >= (expected - tolerance);
+    return actual >= expected;
   }
   if (operator === '<=') {
-    return actual <= (expected + tolerance);
+    return actual <= expected;
   }
   return Math.abs(actual - expected) <= tolerance;
 }
@@ -197,11 +197,9 @@ function evaluateMatch(target, actual) {
       checks.videoBitrate = passed;
       if (!passed) {
         if (bitrateOperator === '>=') {
-          const effectiveMin = Math.max(0, target.videoBitrate - tolerance);
-          mismatches.push(`video bitrate ${formatBps(actual.videoBitrate)} is below minimum ${formatBps(effectiveMin)} (target ${formatBps(target.videoBitrate)}, ±${tolerancePercent}%)`);
+          mismatches.push(`video bitrate ${formatBps(actual.videoBitrate)} is below minimum ${formatBps(target.videoBitrate)}`);
         } else if (bitrateOperator === '<=') {
-          const effectiveMax = target.videoBitrate + tolerance;
-          mismatches.push(`video bitrate ${formatBps(actual.videoBitrate)} is above maximum ${formatBps(effectiveMax)} (target ${formatBps(target.videoBitrate)}, ±${tolerancePercent}%)`);
+          mismatches.push(`video bitrate ${formatBps(actual.videoBitrate)} is above maximum ${formatBps(target.videoBitrate)}`);
         } else {
           mismatches.push(`video bitrate expected≈${formatBps(target.videoBitrate)} (±${tolerancePercent}%) actual=${formatBps(actual.videoBitrate)}`);
         }
@@ -244,7 +242,10 @@ function evaluateMatch(target, actual) {
 }
 
 export async function inspectOne(file, target) {
-  const probe = await runFfprobe(file.path);
+  const ffprobeCommand = typeof target?.ffprobeCommand === 'string' && target.ffprobeCommand.trim()
+    ? target.ffprobeCommand
+    : 'ffprobe';
+  const probe = await runFfprobe(file.path, ffprobeCommand);
 
   const videoStream = (probe.streams || []).find((stream) => stream.codec_type === 'video');
   const audioStream = (probe.streams || []).find((stream) => stream.codec_type === 'audio');

@@ -1,4 +1,10 @@
-import { getCodecOptions, listDirectories } from '../services/optionsService.js';
+import {
+  getCodecOptions,
+  listDirectories,
+  getToolPathOverrides,
+  setToolPathOverrides,
+  getToolHealth
+} from '../services/optionsService.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 
@@ -23,6 +29,30 @@ export async function getDirectoriesHandler(req, res) {
     res.json({ ok: true, base, directories });
   } catch (error) {
     res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
+export function getToolPathsHandler(_req, res) {
+  res.json({ ok: true, toolPaths: getToolPathOverrides() });
+}
+
+export function setToolPathsHandler(req, res) {
+  try {
+    const ffmpegDir = typeof req.body?.ffmpegDir === 'string' ? req.body.ffmpegDir : '';
+    const ffprobeDir = typeof req.body?.ffprobeDir === 'string' ? req.body.ffprobeDir : '';
+    setToolPathOverrides({ ffmpegDir, ffprobeDir });
+    res.json({ ok: true, toolPaths: getToolPathOverrides() });
+  } catch (error) {
+    res.status(400).json({ ok: false, error: error.message });
+  }
+}
+
+export async function getToolHealthHandler(_req, res) {
+  try {
+    const health = await getToolHealth();
+    res.json({ ok: true, health });
+  } catch (error) {
+    res.status(500).json({ ok: false, error: error.message });
   }
 }
 

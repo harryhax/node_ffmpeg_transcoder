@@ -3,6 +3,55 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 let codecCache = null;
+const toolPathOverrides = {
+  ffmpegDir: '',
+  ffprobeDir: ''
+};
+
+function normalizeDirectoryInput(value) {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  const trimmed = String(value).trim();
+  if (!trimmed) {
+    return '';
+  }
+  return path.resolve(trimmed);
+}
+
+function resolveExecutablePath(dirOverride, executableName) {
+  if (!dirOverride) {
+    return executableName;
+  }
+  return path.join(dirOverride, executableName);
+}
+
+export function getToolPathOverrides() {
+  return {
+    ffmpegDir: toolPathOverrides.ffmpegDir,
+    ffprobeDir: toolPathOverrides.ffprobeDir
+  };
+}
+
+export function setToolPathOverrides({ ffmpegDir, ffprobeDir } = {}) {
+  const nextFfmpegDir = normalizeDirectoryInput(ffmpegDir);
+  const nextFfprobeDir = normalizeDirectoryInput(ffprobeDir);
+
+  const changed = nextFfmpegDir !== toolPathOverrides.ffmpegDir || nextFfprobeDir !== toolPathOverrides.ffprobeDir;
+  toolPathOverrides.ffmpegDir = nextFfmpegDir;
+  toolPathOverrides.ffprobeDir = nextFfprobeDir;
+  if (changed) {
+    codecCache = null;
+  }
+}
+
+export function getFfmpegCommand() {
+  return resolveExecutablePath(toolPathOverrides.ffmpegDir, 'ffmpeg');
+}
+
+export function getFfprobeCommand() {
+  return resolveExecutablePath(toolPathOverrides.ffprobeDir, 'ffprobe');
+}
 
 function runCommand(command, args) {
   return new Promise((resolve, reject) => {
@@ -80,9 +129,33 @@ export async function getCodecOptions() {
     return codecCache;
   }
 
-  const output = await runCommand('ffmpeg', ['-hide_banner', '-codecs']);
+  const output = await runCommand(getFfmpegCommand(), ['-hide_banner', '-codecs']);
   codecCache = parseCodecOutput(output);
   return codecCache;
+}
+
+async function checkTool(command, args = ['-version']) {
+  try {
+    await runCommand(command, args);
+    return { ok: true, command };
+  } catch (error) {
+    return { ok: false, command, error: error.message };
+  }
+}
+
+export async function getToolHealth() {
+  const ffmpegCommand = getFfmpegCommand();
+  const ffprobeCommand = getFfprobeCommand();
+  const ffmpeg = await checkTool(ffmpegCommand, ['-version']);
+  const ffprobe = await checkTool(ffprobeCommand, ['-version']);
+
+  return {
+    ffmpeg,
+    ffprobe,
+    allOk: ffmpeg.ok && ffprobe.ok,
+    usingSystemDefaults: !toolPathOverrides.ffmpegDir && !toolPathOverrides.ffprobeDir,
+    overrides: getToolPathOverrides()
+  };
 }
 
 export async function listDirectories(base = '.', maxDepth = 3, maxResults = 250) {

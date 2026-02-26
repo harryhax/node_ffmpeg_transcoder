@@ -1,4 +1,4 @@
-import { getCodecOptions } from '../services/optionsService.js';
+import { getCodecOptions, getFfmpegCommand } from '../services/optionsService.js';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -39,7 +39,7 @@ function broadcastSmokeState() {
 function runFfmpeg(args, hooks = {}) {
   const { onLog, onSpawn } = hooks;
   return new Promise((resolve, reject) => {
-    const child = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(getFfmpegCommand(), args, { stdio: ['ignore', 'pipe', 'pipe'] });
     if (typeof onSpawn === 'function') {
       onSpawn(child);
     }
@@ -184,9 +184,9 @@ export async function generateSmokeTestHandler(req, res) {
 
     // Dynamically detect available codecs
     const { videoCodecs, audioCodecs } = await getCodecOptions();
-    // Only use popular, reliable video codecs if available
-    // Include GPU variants so "GPU only" mode can function correctly.
-    const allowedVideo = [
+    // Default list when user has not made explicit codec selections.
+    // Includes common CPU/GPU encoders that are typically reliable.
+    const defaultAllowedVideo = [
       'h264',
       'hevc',
       'vp9',
@@ -206,19 +206,37 @@ export async function generateSmokeTestHandler(req, res) {
       'av1_vaapi',
       'h264_amf',
       'hevc_amf',
-      'av1_amf'
+      'av1_amf',
+      'mpeg4',
+      'av1'
     ];
     // Only use non-experimental encoders for audio
     const allowedAudio = ['aac', 'ac3', 'libopus'];
-    let safeVideo = videoCodecs
-      .filter(c => allowedVideo.includes(c))
+    const availableVideoSet = new Set(videoCodecs.map((codec) => String(codec || '').toLowerCase()));
+    const requestedSet = new Set(selectedVideoCodecs);
+    const usingExplicitSelections = requestedSet.size > 0;
+
+    let candidateVideoCodecs;
+    if (usingExplicitSelections) {
+      candidateVideoCodecs = Array.from(requestedSet).filter((codec) => availableVideoSet.has(codec));
+      const unavailableRequested = Array.from(requestedSet).filter((codec) => !availableVideoSet.has(codec));
+      broadcastSmokeEvent('status', `Requested video codecs: ${Array.from(requestedSet).join(', ')}`);
+      if (unavailableRequested.length > 0) {
+        broadcastSmokeEvent('status', `Unavailable requested codecs (ignored): ${unavailableRequested.join(', ')}`);
+      }
+    } else {
+      candidateVideoCodecs = videoCodecs.filter((codec) => defaultAllowedVideo.includes(String(codec || '').toLowerCase()));
+    }
+
+    let safeVideo = candidateVideoCodecs
       .map((codec) => ({ codec, ext: resolveVideoExtension(codec) }))
       .filter((item) => Boolean(item.ext));
 
-    if (selectedVideoCodecs.length > 0) {
-      const requestedSet = new Set(selectedVideoCodecs);
-      safeVideo = safeVideo.filter((item) => requestedSet.has(item.codec));
-      broadcastSmokeEvent('status', `Requested video codecs: ${selectedVideoCodecs.join(', ')}`);
+    if (usingExplicitSelections) {
+      const unsupportedExtensionCodecs = candidateVideoCodecs.filter((codec) => !resolveVideoExtension(codec));
+      if (unsupportedExtensionCodecs.length > 0) {
+        broadcastSmokeEvent('status', `Requested codecs without supported output extension (ignored): ${unsupportedExtensionCodecs.join(', ')}`);
+      }
     }
 
     if (useGpuCodecsOnly) {

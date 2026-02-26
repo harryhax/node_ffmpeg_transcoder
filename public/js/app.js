@@ -4,6 +4,7 @@ import { loadCodecs, loadDirectories, runAudit } from './audit.js';
 
 const CODEC_VISIBILITY_KEY = 'codecVisibilityMode';
 const AUDIT_SETTINGS_KEY = 'auditFormSettings';
+const LAST_SCAN_RESULTS_KEY = 'lastAuditScanResults';
 const COMMON_VIDEO_CODECS = ['hevc_videotoolbox', 'hevc', 'h264_videotoolbox', 'h264', 'libx265', 'libx264', 'vp9', 'libvpx-vp9', 'mpeg4', 'av1'];
 const COMMON_AUDIO_CODECS = ['ac3', 'aac', 'eac3', 'libopus', 'opus', 'mp3', 'flac', 'dts', 'pcm_s16le', 'vorbis'];
 
@@ -47,10 +48,119 @@ function loadSavedAuditSettings() {
   }
 }
 
+function loadCachedScanResults() {
+  try {
+    const raw = globalThis.localStorage?.getItem(LAST_SCAN_RESULTS_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+
+    // Backward-compatible shape: { root, rows, summary }
+    if (typeof parsed.root === 'string' && Array.isArray(parsed.rows)) {
+      return {
+        version: 1,
+        byRoot: {
+          [parsed.root]: {
+            rows: parsed.rows,
+            summary: parsed.summary && typeof parsed.summary === 'object' ? parsed.summary : {},
+            savedAt: Number.isFinite(parsed.savedAt) ? parsed.savedAt : Date.now()
+          }
+        },
+        lastRoot: parsed.root
+      };
+    }
+
+    // New shape: { version, byRoot: { [root]: { rows, summary, savedAt } }, lastRoot }
+    if (!parsed.byRoot || typeof parsed.byRoot !== 'object') {
+      return null;
+    }
+
+    const byRoot = {};
+    for (const [root, entry] of Object.entries(parsed.byRoot)) {
+      if (typeof root !== 'string' || !entry || typeof entry !== 'object') {
+        continue;
+      }
+      if (!Array.isArray(entry.rows)) {
+        continue;
+      }
+      byRoot[root] = {
+        rows: entry.rows,
+        summary: entry.summary && typeof entry.summary === 'object' ? entry.summary : {},
+        savedAt: Number.isFinite(entry.savedAt) ? entry.savedAt : Date.now()
+      };
+    }
+
+    return {
+      version: 1,
+      byRoot,
+      lastRoot: typeof parsed.lastRoot === 'string' ? parsed.lastRoot : ''
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveCachedScanResults(rows, summary = {}) {
+  if (!rootInput) {
+    return;
+  }
+
+  const root = String(rootInput.value || '').trim();
+  if (!root) {
+    return;
+  }
+
+  const existing = loadCachedScanResults() || { version: 1, byRoot: {}, lastRoot: '' };
+  const payload = {
+    version: 1,
+    byRoot: {
+      ...existing.byRoot,
+      [root]: {
+        rows: Array.isArray(rows) ? rows : [],
+        summary: summary && typeof summary === 'object' ? summary : {},
+        savedAt: Date.now()
+      }
+    },
+    lastRoot: root
+  };
+
+  try {
+    globalThis.localStorage?.setItem(LAST_SCAN_RESULTS_KEY, JSON.stringify(payload));
+  } catch {
+  }
+}
+
+function restoreCachedScanResultsForCurrentRoot() {
+  const cached = loadCachedScanResults();
+  if (!cached || !rootInput) {
+    return false;
+  }
+
+  const currentRoot = String(rootInput.value || '').trim();
+  if (!currentRoot) {
+    return false;
+  }
+
+  const entry = cached.byRoot?.[currentRoot];
+  if (!entry || !Array.isArray(entry.rows)) {
+    return false;
+  }
+
+  const rows = Array.isArray(entry.rows) ? entry.rows : [];
+  renderResultsWithStore(rows, resultsBody, () => {});
+  updateOriginalTotalFromRows(rows);
+  return true;
+}
+
 function saveAuditSettings() {
   if (!form) return;
   const data = new FormData(form);
   const existing = loadSavedAuditSettings();
+  const transcodeSettingsCollapse = document.getElementById('transcode-settings-collapse');
   const payload = {
     root: data.get('root') || '',
     transcodeLocation: typeof existing.transcodeLocation === 'string' ? existing.transcodeLocation : '',
@@ -64,7 +174,8 @@ function saveAuditSettings() {
     pauseBatteryPct: typeof existing.pauseBatteryPct === 'string' ? existing.pauseBatteryPct : '',
     startBatteryPct: typeof existing.startBatteryPct === 'string' ? existing.startBatteryPct : '',
     saveTranscodeLog: existing.saveTranscodeLog === true,
-    deleteOriginal: document.getElementById('delete-original')?.checked === true
+    deleteOriginal: document.getElementById('delete-original')?.checked === true,
+    transcodeSettingsExpanded: transcodeSettingsCollapse ? transcodeSettingsCollapse.classList.contains('show') : true
   };
   globalThis.localStorage?.setItem(AUDIT_SETTINGS_KEY, JSON.stringify(payload));
 }
@@ -102,7 +213,18 @@ function applySavedAuditSettings(settings) {
 
   const deleteOriginalInput = document.getElementById('delete-original');
   if (deleteOriginalInput) {
-    deleteOriginalInput.checked = settings.deleteOriginal === true;
+    deleteOriginalInput.checked = settings.deleteOriginal !== false;
+  }
+
+  const transcodeSettingsCollapse = document.getElementById('transcode-settings-collapse');
+  const transcodeSettingsToggle = document.getElementById('transcode-settings-toggle');
+  if (transcodeSettingsCollapse) {
+    const isExpanded = settings.transcodeSettingsExpanded !== false;
+    transcodeSettingsCollapse.classList.toggle('show', isExpanded);
+    if (transcodeSettingsToggle) {
+      transcodeSettingsToggle.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+      transcodeSettingsToggle.textContent = isExpanded ? 'Collapse' : 'Expand';
+    }
   }
 }
 
@@ -118,6 +240,9 @@ const videoCodecSelect = document.getElementById('videoCodec');
 const audioCodecSelect = document.getElementById('audioCodec');
 const transcodeBtn = document.getElementById('transcode-btn');
 const selectAllCheckbox = document.getElementById('select-all-checkbox');
+const transcodeSettingsToggle = document.getElementById('transcode-settings-toggle');
+const transcodeSettingsCollapse = document.getElementById('transcode-settings-collapse');
+const ffmpegWarning = document.getElementById('ffmpeg-warning');
 const savedNet = document.getElementById('saved-net');
 const savedSource = document.getElementById('saved-source');
 const savedFiles = document.getElementById('saved-files');
@@ -262,6 +387,44 @@ function formatMB(bytes) {
     return '--';
   }
   return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
+async function refreshToolHealthWarning() {
+  if (!ffmpegWarning) {
+    return;
+  }
+
+  const missingToolsWarningHtml = '⚠️ <strong>Warning:</strong> This program requires <strong>FFMPEG</strong> and <strong>FFPROBE</strong>. Please install them from <a href="https://ffmpeg.org/download.html" target="_blank" rel="noopener noreferrer">https://ffmpeg.org/download.html</a>, or use <strong>Settings</strong> to point directly to your ffmpeg/ffprobe folders if you already have them.';
+
+  try {
+    const response = await fetch('/api/options/tool-health');
+    const data = await response.json();
+    if (!response.ok || !data?.ok) {
+      throw new Error(data?.error || 'Unable to check ffmpeg/ffprobe health.');
+    }
+
+    const health = data.health || {};
+    const ffmpegOk = health?.ffmpeg?.ok === true;
+    const ffprobeOk = health?.ffprobe?.ok === true;
+    if (ffmpegOk && ffprobeOk) {
+      ffmpegWarning.classList.add('d-none');
+      ffmpegWarning.innerHTML = '';
+      return;
+    }
+
+    ffmpegWarning.classList.remove('d-none');
+    ffmpegWarning.innerHTML = missingToolsWarningHtml;
+  } catch (error) {
+    ffmpegWarning.classList.remove('d-none');
+    ffmpegWarning.innerHTML = missingToolsWarningHtml;
+  }
+}
+
+function isToolAvailabilityError(error) {
+  const text = String(error?.message || error || '').toLowerCase();
+  return text.includes('failed to start')
+    || text.includes('ffmpeg')
+    || text.includes('ffprobe');
 }
 
 function getRowsTotalBytes(rows) {
@@ -801,6 +964,7 @@ async function syncCodecDropdowns() {
 // Initial load
 (async () => {
   try {
+    await refreshToolHealthWarning();
     const savedSettings = loadSavedAuditSettings();
     applySavedAuditSettings(savedSettings);
     if (rootInput && (!rootInput.value || !String(rootInput.value).trim())) {
@@ -813,10 +977,18 @@ async function syncCodecDropdowns() {
         rootPicker.value = savedSettings.root;
       }
     }
-    renderMessage(message, 'info', `Scan files using root folder: ${rootInput?.value || './smoke-fixtures'}.`);
+    const restored = restoreCachedScanResultsForCurrentRoot();
+    if (restored) {
+      renderMessage(message, 'info', `Restored saved scan results for ${rootInput?.value || './smoke-fixtures'}.`);
+    } else {
+      renderMessage(message, 'info', `Scan files using root folder: ${rootInput?.value || './smoke-fixtures'}.`);
+    }
     await recoverTranscodeSessionIfRunning();
   } catch (error) {
-    renderMessage(message, 'danger', error.message);
+    await refreshToolHealthWarning();
+    if (!isToolAvailabilityError(error)) {
+      renderMessage(message, 'danger', error.message);
+    }
   }
 })();
 
@@ -831,6 +1003,22 @@ if (rootPicker) {
     if (rootInput && rootPicker.value) {
       rootInput.value = rootPicker.value;
       saveAuditSettings();
+      const restored = restoreCachedScanResultsForCurrentRoot();
+      if (restored) {
+        renderMessage(message, 'info', `Restored saved scan results for ${rootInput.value}.`);
+      } else {
+        renderMessage(message, 'info', `No saved scan results found for ${rootInput.value}.`);
+      }
+    }
+  });
+}
+
+if (rootInput) {
+  rootInput.addEventListener('change', () => {
+    saveAuditSettings();
+    const restored = restoreCachedScanResultsForCurrentRoot();
+    if (restored) {
+      renderMessage(message, 'info', `Restored saved scan results for ${rootInput.value}.`);
     }
   });
 }
@@ -843,6 +1031,23 @@ if (refreshDirsButton) {
     } catch (error) {
       renderMessage(message, 'danger', error.message);
     }
+  });
+}
+
+if (transcodeSettingsCollapse) {
+  transcodeSettingsCollapse.addEventListener('shown.bs.collapse', () => {
+    if (transcodeSettingsToggle) {
+      transcodeSettingsToggle.textContent = 'Collapse';
+      transcodeSettingsToggle.setAttribute('aria-expanded', 'true');
+    }
+    saveAuditSettings();
+  });
+  transcodeSettingsCollapse.addEventListener('hidden.bs.collapse', () => {
+    if (transcodeSettingsToggle) {
+      transcodeSettingsToggle.textContent = 'Expand';
+      transcodeSettingsToggle.setAttribute('aria-expanded', 'false');
+    }
+    saveAuditSettings();
   });
 }
 
@@ -892,6 +1097,7 @@ function renderResultsWithStore(rows, ...args) {
   window._lastAuditRows = rows;
   origRenderResults(rows, resultsBody, setupEnhancements);
   updateNetSavedFromRows(rows);
+  saveCachedScanResults(rows);
   if (activeTranscodingFilePath) {
     setActiveTranscodingRow(activeTranscodingFilePath);
   }
@@ -901,9 +1107,10 @@ function renderResultsWithStore(rows, ...args) {
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   saveAuditSettings();
-  await runAudit(form, runButton, message, resultsBody, (rows) => {
+  await runAudit(form, runButton, message, resultsBody, (rows, summary) => {
     renderResultsWithStore(rows, resultsBody, () => {});
     updateOriginalTotalFromRows(rows);
+    saveCachedScanResults(rows, summary || {});
   });
 });
 

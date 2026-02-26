@@ -5,11 +5,14 @@ const SMOKE_SETTINGS_KEY = 'smokeGeneratorSettings';
 const showCommonCodecsCheckbox = document.getElementById('show-common-codecs');
 const codecSettingStatus = document.getElementById('codec-setting-status');
 const transcodeLocationSetting = document.getElementById('transcode-location-setting');
+const ffmpegDirSetting = document.getElementById('ffmpeg-dir-setting');
+const ffprobeDirSetting = document.getElementById('ffprobe-dir-setting');
 const videoBitrateToleranceSetting = document.getElementById('video-bitrate-tolerance-setting');
 const pauseBatteryPctSetting = document.getElementById('pause-battery-pct-setting');
 const startBatteryPctSetting = document.getElementById('start-battery-pct-setting');
 const saveTranscodeLogSetting = document.getElementById('save-transcode-log-setting');
 const advancedSettingStatus = document.getElementById('advanced-setting-status');
+let toolPathSaveTimeout = null;
 
 function loadAuditSettings() {
   try {
@@ -28,11 +31,57 @@ function saveAuditSettingsPatch(patch) {
   globalThis.localStorage?.setItem(AUDIT_SETTINGS_KEY, JSON.stringify(merged));
 }
 
-function renderAdvancedSettingStatus() {
+function renderAdvancedSettingStatus(text = 'Saved. These defaults are used by the audit/transcode page.') {
   if (!advancedSettingStatus) {
     return;
   }
-  advancedSettingStatus.textContent = 'Saved. These defaults are used by the audit/transcode page.';
+  advancedSettingStatus.textContent = text;
+}
+
+async function loadToolPathsFromServer() {
+  const response = await fetch('/api/options/tool-paths');
+  const data = await response.json();
+  if (!response.ok || !data?.ok) {
+    throw new Error(data?.error || 'Unable to load ffmpeg/ffprobe folder settings.');
+  }
+  return data.toolPaths || {};
+}
+
+async function saveToolPathsToServer() {
+  const ffmpegDir = ffmpegDirSetting ? ffmpegDirSetting.value.trim() : '';
+  const ffprobeDir = ffprobeDirSetting ? ffprobeDirSetting.value.trim() : '';
+
+  const response = await fetch('/api/options/tool-paths', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ffmpegDir, ffprobeDir })
+  });
+  const data = await response.json();
+  if (!response.ok || !data?.ok) {
+    throw new Error(data?.error || 'Unable to save ffmpeg/ffprobe folder settings.');
+  }
+  return data.toolPaths || {};
+}
+
+function scheduleToolPathSave() {
+  if (toolPathSaveTimeout) {
+    clearTimeout(toolPathSaveTimeout);
+  }
+
+  toolPathSaveTimeout = setTimeout(async () => {
+    try {
+      const saved = await saveToolPathsToServer();
+      if (ffmpegDirSetting) {
+        ffmpegDirSetting.value = typeof saved.ffmpegDir === 'string' ? saved.ffmpegDir : '';
+      }
+      if (ffprobeDirSetting) {
+        ffprobeDirSetting.value = typeof saved.ffprobeDir === 'string' ? saved.ffprobeDir : '';
+      }
+      renderAdvancedSettingStatus('Saved ffmpeg/ffprobe folder overrides. Blank uses system default.');
+    } catch (error) {
+      renderAdvancedSettingStatus(`Failed to save ffmpeg/ffprobe folder overrides: ${error.message}`);
+    }
+  }, 300);
 }
 
 function getCodecVisibilityMode() {
@@ -130,6 +179,23 @@ if (showCommonCodecsCheckbox) {
       saveAuditSettingsPatch({ saveTranscodeLog: saveTranscodeLogSetting.checked });
       renderAdvancedSettingStatus();
     });
+  }
+
+  if (ffmpegDirSetting || ffprobeDirSetting) {
+    loadToolPathsFromServer()
+      .then((toolPaths) => {
+        if (ffmpegDirSetting) {
+          ffmpegDirSetting.value = typeof toolPaths.ffmpegDir === 'string' ? toolPaths.ffmpegDir : '';
+          ffmpegDirSetting.addEventListener('input', scheduleToolPathSave);
+        }
+        if (ffprobeDirSetting) {
+          ffprobeDirSetting.value = typeof toolPaths.ffprobeDir === 'string' ? toolPaths.ffprobeDir : '';
+          ffprobeDirSetting.addEventListener('input', scheduleToolPathSave);
+        }
+      })
+      .catch((error) => {
+        renderAdvancedSettingStatus(`Failed to load ffmpeg/ffprobe folder overrides: ${error.message}`);
+      });
   }
 }
 

@@ -3,6 +3,7 @@ import { spawn } from 'child_process';
 import fs from 'fs/promises';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
+import { getFfmpegCommand, getFfprobeCommand } from '../services/optionsService.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -328,8 +329,9 @@ function extractProgressFromChunk(chunkText) {
 function runFfprobeDuration(filePath) {
   return new Promise((resolve) => {
     const args = ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', filePath];
+    const ffprobeCommand = getFfprobeCommand();
 
-    const child = spawn('ffprobe', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(ffprobeCommand, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let stdout = '';
 
     child.stdout.on('data', (chunk) => {
@@ -788,7 +790,8 @@ const transcode = async (req, res) => {
       }
       const args = buildFfmpegArgs(workingInput, workingOutput, { videoCodec, audioCodec, videoBitrate, audioChannels });
       sourceDurationSeconds = await runFfprobeDuration(workingInput).catch(() => null);
-      const commandText = `ffmpeg ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}`;
+      const ffmpegCommandPath = getFfmpegCommand();
+      const commandText = `${ffmpegCommandPath} ${args.map(a => typeof a === 'string' ? a : JSON.stringify(a)).join(' ')}`;
       ffmpegCommand = commandText;
       broadcastTranscodeEvent('status', `Processing: ${file}`);
       emitTranscodeFileEvent('file-start', {
@@ -814,7 +817,7 @@ const transcode = async (req, res) => {
         currentElapsedSeconds: 0
       });
       await new Promise((resolve, reject) => {
-        const ff = spawn('ffmpeg', args);
+        const ff = spawn(getFfmpegCommand(), args);
         lastFfmpegProcess = ff;
         lastFfmpegProcessPaused = false;
         const startedAtMs = Date.now();
@@ -929,7 +932,7 @@ const transcode = async (req, res) => {
         await fs.unlink(tempOutput);
         if (deleteOriginal) {
           try {
-            console.log(`Deleting original file: ${file}`);
+           // console.log(`Deleting original file: ${file}`);
             await fs.unlink(file);
           } catch (delErr) {
             results.push({ file, output: origOutput, ok: true, warning: `Transcoded, but failed to delete original: ${delErr.message}`, logPath: perFileLogPath });
@@ -958,7 +961,7 @@ const transcode = async (req, res) => {
         // No transcodeLocation, just handle output in place
         if (deleteOriginal) {
           try {
-            console.log(`Deleting original file: ${file}`);
+         //   console.log(`Deleting original file: ${file}`);
             await fs.unlink(file);
           } catch (delErr) {
             results.push({ file, output: workingOutput, ok: true, warning: `Transcoded, but failed to delete original: ${delErr.message}`, logPath: perFileLogPath });
