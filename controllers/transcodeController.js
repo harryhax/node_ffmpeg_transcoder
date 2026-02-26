@@ -1,68 +1,29 @@
 import path from 'path';
 import { spawn } from 'child_process';
 import fs from 'fs/promises';
-import { promisify } from 'node:util';
-import { execFile } from 'node:child_process';
-import { getFfmpegCommand, getFfprobeCommand } from '../services/optionsService.js';
-
-const execFileAsync = promisify(execFile);
+import { getFfmpegCommand } from '../services/optionsService.js';
+import {
+  createBatteryPauseMonitor,
+  normalizePauseBatteryPct,
+  normalizeStartBatteryPct,
+  readBatteryInfo
+} from '../services/transcodeBattery.js';
+import { createTranscodeStreamState } from '../services/transcodeStreamState.js';
+import {
+  makeRunLogPath,
+  writePerFileTranscodeLog,
+  writeTranscodeRunLog
+} from '../services/transcodeLogging.js';
+import {
+  buildFailLogPathFromOutput,
+  buildLogPathFromOutput,
+  buildOutputPath,
+  extractProgressFromChunk,
+  runFfprobeDuration
+} from '../services/transcodeUtils.js';
 
 const transcodeLocationRoot = path.resolve(process.env.TRANSCODE_LOCATION_ROOT || process.cwd());
-const transcodeRunLogDir = path.resolve(process.cwd(), 'transcode-logs');
-
-function makeRunLogPath(startedAtMs = Date.now()) {
-  const stamp = new Date(startedAtMs).toISOString().replace(/[:.]/g, '-');
-  return path.join(transcodeRunLogDir, `transcode-run-${stamp}.log`);
-}
-
-function stringifyForLog(value) {
-  try {
-    return JSON.stringify(value, null, 2);
-  } catch {
-    return String(value);
-  }
-}
-
-async function writeTranscodeRunLog({
-  logPath,
-  startedAtMs,
-  requestPayload,
-  queuedDurations,
-  fileDiagnostics,
-  fileAttempts,
-  results,
-  savingsSummary
-}) {
-  const finishedAtMs = Date.now();
-  const lines = [
-    '[transcode run]',
-    `startedAt: ${new Date(startedAtMs).toISOString()}`,
-    `finishedAt: ${new Date(finishedAtMs).toISOString()}`,
-    `durationSeconds: ${((finishedAtMs - startedAtMs) / 1000).toFixed(2)}`,
-    `workingDir: ${process.cwd()}`,
-    '',
-    '[request payload]',
-    stringifyForLog(requestPayload),
-    '',
-    '[queued durations seconds]',
-    stringifyForLog(queuedDurations),
-    '',
-    '[input file diagnostics]',
-    stringifyForLog(fileDiagnostics),
-    '',
-    '[file attempts]',
-    stringifyForLog(fileAttempts),
-    '',
-    '[results]',
-    stringifyForLog(results),
-    '',
-    '[savings summary]',
-    stringifyForLog(savingsSummary)
-  ];
-
-  await fs.mkdir(path.dirname(logPath), { recursive: true });
-  await fs.writeFile(logPath, `${lines.join('\n')}\n`, 'utf8');
-}
+const transcodeStreamState = createTranscodeStreamState();
 
 function resolveTranscodeLocation(inputPath) {
   if (!inputPath) {
@@ -82,34 +43,6 @@ function resolveTranscodeLocation(inputPath) {
   return resolved;
 }
 
-function isWebmCompatible(videoCodec, audioCodec) {
-  const normalizedVideo = (videoCodec || '').toLowerCase();
-  const normalizedAudio = (audioCodec || '').toLowerCase();
-
-  const videoOk =
-    !normalizedVideo ||
-    normalizedVideo.includes('vp8') ||
-    normalizedVideo.includes('vp9') ||
-    normalizedVideo.includes('av1');
-
-  const audioOk =
-    !normalizedAudio ||
-    normalizedAudio.includes('opus') ||
-    normalizedAudio.includes('vorbis');
-
-  return videoOk && audioOk;
-}
-
-function buildOutputPath(inputPath, opts = {}) {
-  const inputExt = path.extname(inputPath).toLowerCase();
-  const ext = inputExt === '.webm' && !isWebmCompatible(opts.videoCodec, opts.audioCodec)
-    ? '.mkv'
-    : inputExt;
-  const base = path.basename(inputPath, inputExt);
-  const dir = path.dirname(inputPath);
-  return path.join(dir, `${base}.transcoded${ext}`);
-}
-
 function buildFfmpegArgs(input, output, opts) {
   const args = ['-y', '-i', input];
   if (opts.videoCodec) args.push('-c:v', opts.videoCodec);
@@ -120,28 +53,8 @@ function buildFfmpegArgs(input, output, opts) {
   return args;
 }
 
-function buildLogPathFromOutput(outputPath) {
-  const ext = path.extname(outputPath);
-  const base = path.basename(outputPath, ext);
-  const dir = path.dirname(outputPath);
-  return path.join(dir, `${base}.log`);
-}
-
-function buildFailLogPathFromOutput(outputPath) {
-  const ext = path.extname(outputPath);
-  const base = path.basename(outputPath, ext);
-  const dir = path.dirname(outputPath);
-  return path.join(dir, `${base}.fail.log`);
-}
-
-const transcodeStreamClients = new Set();
 let transcodeInProgress = false;
 let lastFfmpegProcessPaused = false;
-let latestTranscodeStatusText = null;
-let latestQueuePayloadText = null;
-let latestOverallPayloadText = null;
-let latestProgressPayloadText = null;
-let latestFileStartPayload = null;
 const transcodeSavingsTotals = {
   filesTranscoded: 0,
   attemptedFiles: 0,
@@ -178,211 +91,22 @@ function getTranscodeSavingsSummary() {
   };
 }
 
-function writeSseEvent(res, event, payload) {
-  res.write(`event: ${event}\n`);
-  const text = String(payload ?? '');
-  for (const line of text.split(/\r?\n/)) {
-    res.write(`data: ${line}\n`);
-  }
-  res.write('\n');
-}
-
-function parseJsonSafe(payloadText) {
-  if (typeof payloadText !== 'string' || !payloadText.trim()) {
-    return null;
-  }
-  try {
-    return JSON.parse(payloadText);
-  } catch {
-    return null;
-  }
-}
-
 function getTranscodeLiveState() {
-  return {
-    inProgress: transcodeInProgress,
-    status: latestTranscodeStatusText,
-    queue: parseJsonSafe(latestQueuePayloadText),
-    overall: parseJsonSafe(latestOverallPayloadText),
-    progress: parseJsonSafe(latestProgressPayloadText),
-    activeFile: latestFileStartPayload
-  };
+  return transcodeStreamState.getLiveState(transcodeInProgress);
 }
 
 function resetTranscodeLiveSnapshots() {
-  latestTranscodeStatusText = null;
-  latestQueuePayloadText = null;
-  latestOverallPayloadText = null;
-  latestProgressPayloadText = null;
-  latestFileStartPayload = null;
+  transcodeStreamState.resetAllSnapshots();
 }
 
 function broadcastTranscodeEvent(event, payload) {
-  if (event === 'status') {
-    latestTranscodeStatusText = String(payload ?? '');
-  } else if (event === 'queue') {
-    latestQueuePayloadText = String(payload ?? '');
-  } else if (event === 'overall') {
-    latestOverallPayloadText = String(payload ?? '');
-  } else if (event === 'progress') {
-    latestProgressPayloadText = String(payload ?? '');
-  }
-
-  for (const client of transcodeStreamClients) {
-    writeSseEvent(client, event, payload);
-  }
+  transcodeStreamState.broadcastEvent(event, payload);
 }
 
 function emitTranscodeFileEvent(event, payload) {
-  if (event === 'file-start') {
-    latestFileStartPayload = payload;
-  } else if ((event === 'file-complete' || event === 'file-failed') && latestFileStartPayload?.file === payload?.file) {
-    latestFileStartPayload = null;
-  }
-  broadcastTranscodeEvent(event, JSON.stringify(payload));
+  transcodeStreamState.emitFileEvent(event, payload);
 }
 
-async function readBatteryInfo() {
-  if (process.platform !== 'darwin') {
-    return { available: false };
-  }
-
-  try {
-    const { stdout } = await execFileAsync('pmset', ['-g', 'batt']);
-    const percentMatch = stdout.match(/(\d+)%/);
-    const chargingMatch = stdout.match(/;\s*(charging|discharging|charged);/i);
-
-    return {
-      available: true,
-      percent: percentMatch ? Number.parseInt(percentMatch[1], 10) : null,
-      state: chargingMatch ? chargingMatch[1].toLowerCase() : 'unknown'
-    };
-  } catch {
-    return { available: false };
-  }
-}
-
-function normalizePauseBatteryPct(input) {
-  if (input === undefined || input === null || input === '') {
-    return null;
-  }
-
-  const value = Number.parseInt(String(input), 10);
-  if (!Number.isFinite(value) || value < 1 || value > 99) {
-    throw new Error('Pause battery percent must be between 1 and 99.');
-  }
-  return value;
-}
-
-function normalizeStartBatteryPct(input) {
-  if (input === undefined || input === null || input === '') {
-    return null;
-  }
-
-  const value = Number.parseInt(String(input), 10);
-  if (!Number.isFinite(value) || value < 1 || value > 99) {
-    throw new Error('Start battery percent must be between 1 and 99.');
-  }
-  return value;
-}
-
-function parseTimestampToSeconds(value) {
-  if (!value || typeof value !== 'string') {
-    return null;
-  }
-
-  const matched = value.trim().match(/^(\d+):(\d{2}):(\d{2}(?:\.\d+)?)$/);
-  if (!matched) {
-    return null;
-  }
-
-  const hours = Number.parseInt(matched[1], 10);
-  const minutes = Number.parseInt(matched[2], 10);
-  const seconds = Number.parseFloat(matched[3]);
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || !Number.isFinite(seconds)) {
-    return null;
-  }
-
-  return (hours * 3600) + (minutes * 60) + seconds;
-}
-
-function extractProgressFromChunk(chunkText) {
-  if (!chunkText) {
-    return null;
-  }
-
-  const timeMatches = [...chunkText.matchAll(/time=(\d+:\d{2}:\d{2}(?:\.\d+)?)/g)];
-  if (!timeMatches.length) {
-    return null;
-  }
-
-  const speedMatches = [...chunkText.matchAll(/speed=\s*([0-9.]+)x/g)];
-  const latestTime = timeMatches[timeMatches.length - 1][1];
-  const latestSpeed = speedMatches.length ? Number.parseFloat(speedMatches[speedMatches.length - 1][1]) : null;
-
-  return {
-    processedSeconds: parseTimestampToSeconds(latestTime),
-    speed: Number.isFinite(latestSpeed) && latestSpeed > 0 ? latestSpeed : null
-  };
-}
-
-function runFfprobeDuration(filePath) {
-  return new Promise((resolve) => {
-    const args = ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', filePath];
-    const ffprobeCommand = getFfprobeCommand();
-
-    const child = spawn(ffprobeCommand, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-
-    child.on('error', () => {
-      resolve(null);
-    });
-
-    child.on('close', (code) => {
-      if (code !== 0) {
-        resolve(null);
-        return;
-      }
-
-      try {
-        const parsed = JSON.parse(stdout || '{}');
-        const candidates = [];
-
-        const formatDuration = Number.parseFloat(parsed?.format?.duration);
-        if (Number.isFinite(formatDuration) && formatDuration > 0) {
-          candidates.push(formatDuration);
-        }
-
-        const streams = Array.isArray(parsed?.streams) ? parsed.streams : [];
-        for (const stream of streams) {
-          const streamDuration = Number.parseFloat(stream?.duration);
-          if (Number.isFinite(streamDuration) && streamDuration > 0) {
-            candidates.push(streamDuration);
-          }
-
-          const tagDuration = stream?.tags?.DURATION;
-          const tagSeconds = parseTimestampToSeconds(String(tagDuration || ''));
-          if (Number.isFinite(tagSeconds) && tagSeconds > 0) {
-            candidates.push(tagSeconds);
-          }
-        }
-
-        if (!candidates.length) {
-          resolve(null);
-          return;
-        }
-
-        resolve(Math.max(...candidates));
-      } catch {
-        resolve(null);
-      }
-    });
-  });
-}
 
 async function verifyTranscodeOutput(inputPath, outputPath) {
   const outputStat = await fs.stat(outputPath);
@@ -406,122 +130,6 @@ async function verifyTranscodeOutput(inputPath, outputPath) {
       `Output duration differs too much from input (input=${inputDuration.toFixed(2)}s output=${outputDuration.toFixed(2)}s).`
     );
   }
-}
-
-function formatBytes(bytes) {
-  if (!Number.isFinite(bytes)) {
-    return 'unknown';
-  }
-  return `${bytes} bytes`;
-}
-
-function formatDate(value) {
-  if (!value) {
-    return 'unknown';
-  }
-  return new Date(value).toISOString();
-}
-
-function formatCommand(command, args) {
-  return `${command} ${args.map((arg) => (String(arg).includes(' ') ? JSON.stringify(String(arg)) : String(arg))).join(' ')}`;
-}
-
-function runCommand(command, args) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-
-    child.stdout.on('data', (chunk) => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('error', (error) => {
-      reject(new Error(`Failed to start ${command}: ${error.message}`));
-    });
-
-    child.on('close', (code) => {
-      resolve({ code, stdout, stderr });
-    });
-  });
-}
-
-async function collectFileDetails(filePath) {
-  const stat = await fs.stat(filePath).catch(() => null);
-  const ffprobeArgs = ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', filePath];
-  const ffprobeResult = await runCommand('ffprobe', ffprobeArgs).catch((error) => ({ code: -1, stdout: '', stderr: error.message }));
-
-  return {
-    filePath,
-    stat,
-    ffprobe: {
-      command: formatCommand('ffprobe', ffprobeArgs),
-      ...ffprobeResult
-    }
-  };
-}
-
-async function writePerFileTranscodeLog({
-  logPath,
-  sourcePath,
-  outputPath,
-  ffmpegCommand,
-  ffmpegStdout,
-  ffmpegStderr,
-  status,
-  errorMessage
-}) {
-  const sourceDetails = await collectFileDetails(sourcePath);
-  const outputDetails = outputPath ? await collectFileDetails(outputPath) : null;
-
-  const lines = [
-    `status: ${status}`,
-    `source: ${sourcePath}`,
-    `output: ${outputPath || 'n/a'}`,
-    `ffmpeg command: ${ffmpegCommand}`,
-    '',
-    '[source file stat]',
-    `size: ${sourceDetails?.stat ? formatBytes(sourceDetails.stat.size) : 'missing'}`,
-    `mtime: ${sourceDetails?.stat ? formatDate(sourceDetails.stat.mtime) : 'missing'}`,
-    '',
-    '[source ffprobe command]',
-    sourceDetails.ffprobe.command,
-    '[source ffprobe stdout]',
-    sourceDetails.ffprobe.stdout || '(empty)',
-    '[source ffprobe stderr]',
-    sourceDetails.ffprobe.stderr || '(empty)',
-    '',
-    '[ffmpeg stdout]',
-    ffmpegStdout || '(empty)',
-    '[ffmpeg stderr]',
-    ffmpegStderr || '(empty)'
-  ];
-
-  if (outputDetails) {
-    lines.push(
-      '',
-      '[output file stat]',
-      `size: ${outputDetails?.stat ? formatBytes(outputDetails.stat.size) : 'missing'}`,
-      `mtime: ${outputDetails?.stat ? formatDate(outputDetails.stat.mtime) : 'missing'}`,
-      '',
-      '[output ffprobe command]',
-      outputDetails.ffprobe.command,
-      '[output ffprobe stdout]',
-      outputDetails.ffprobe.stdout || '(empty)',
-      '[output ffprobe stderr]',
-      outputDetails.ffprobe.stderr || '(empty)'
-    );
-  }
-
-  if (errorMessage) {
-    lines.push('', '[error]', errorMessage);
-  }
-
-  await fs.writeFile(logPath, `${lines.join('\n')}\n`, 'utf8');
 }
 
 async function readFileSizeSafe(filePath) {
@@ -822,35 +430,18 @@ const transcode = async (req, res) => {
         lastFfmpegProcessPaused = false;
         const startedAtMs = Date.now();
         let lastProgressEmitMs = 0;
-        let batteryCheckInFlight = false;
-        const batteryMonitorInterval = pauseBatteryThreshold
-          ? setInterval(async () => {
-            if (batteryCheckInFlight || !lastFfmpegProcess || lastFfmpegProcess !== ff) {
-              return;
-            }
-
-            batteryCheckInFlight = true;
-            try {
-              const battery = await readBatteryInfo();
-              if (!battery.available || !Number.isFinite(battery.percent)) {
-                return;
-              }
-
-              if (!lastFfmpegProcessPaused && battery.percent <= pauseBatteryThreshold) {
-                ff.kill('SIGSTOP');
-                lastFfmpegProcessPaused = true;
-                broadcastTranscodeEvent('status', `Paused: battery at ${battery.percent}% (threshold ${pauseBatteryThreshold}%).`);
-              } else if (lastFfmpegProcessPaused && battery.percent >= Math.min(100, pauseBatteryThreshold + 2)) {
-                ff.kill('SIGCONT');
-                lastFfmpegProcessPaused = false;
-                broadcastTranscodeEvent('status', `Resumed: battery recovered to ${battery.percent}%.`);
-              }
-            } catch {
-            } finally {
-              batteryCheckInFlight = false;
-            }
-          }, 15000)
-          : null;
+        const stopBatteryMonitor = createBatteryPauseMonitor({
+          ffmpegProcess: ff,
+          pauseBatteryThreshold,
+          isCurrentProcess: () => !!lastFfmpegProcess && lastFfmpegProcess === ff,
+          getPaused: () => lastFfmpegProcessPaused,
+          setPaused: (paused) => {
+            lastFfmpegProcessPaused = paused;
+          },
+          onStatus: (message) => {
+            broadcastTranscodeEvent('status', message);
+          }
+        });
         let stderr = '';
         ff.stderr.on('data', d => {
           const msg = d.toString();
@@ -912,8 +503,8 @@ const transcode = async (req, res) => {
           broadcastTranscodeEvent('log', msg);
         });
         ff.on('close', code => {
-          if (batteryMonitorInterval) {
-            clearInterval(batteryMonitorInterval);
+          if (stopBatteryMonitor) {
+            stopBatteryMonitor();
           }
           lastFfmpegProcess = null;
           lastFfmpegProcessPaused = false;
@@ -1114,10 +705,7 @@ const transcode = async (req, res) => {
   });
 
   transcodeInProgress = false;
-  latestFileStartPayload = null;
-  latestProgressPayloadText = null;
-  latestOverallPayloadText = null;
-  latestQueuePayloadText = null;
+  transcodeStreamState.clearProgressSnapshots();
   const failed = enrichedResults.filter(r => !r.ok);
   if (failed.length) {
     broadcastTranscodeEvent('done', 'Transcode finished with errors.');
@@ -1161,24 +749,13 @@ const transcodeStream = (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
-  transcodeStreamClients.add(res);
-  writeSseEvent(res, 'status', transcodeInProgress ? 'Transcode in progress.' : 'Connected. Waiting for transcode.');
+  transcodeStreamState.addClient(res);
+  transcodeStreamState.writeSseEvent(res, 'status', transcodeInProgress ? 'Transcode in progress.' : 'Connected. Waiting for transcode.');
   if (transcodeInProgress) {
-    if (latestQueuePayloadText) {
-      writeSseEvent(res, 'queue', latestQueuePayloadText);
-    }
-    if (latestOverallPayloadText) {
-      writeSseEvent(res, 'overall', latestOverallPayloadText);
-    }
-    if (latestProgressPayloadText) {
-      writeSseEvent(res, 'progress', latestProgressPayloadText);
-    }
-    if (latestFileStartPayload) {
-      writeSseEvent(res, 'file-start', JSON.stringify(latestFileStartPayload));
-    }
+    transcodeStreamState.replayProgressSnapshots(res);
   }
   req.on('close', () => {
-    transcodeStreamClients.delete(res);
+    transcodeStreamState.removeClient(res);
   });
 };
 
