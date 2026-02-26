@@ -2,3 +2,5 @@ node_modules/
 smoke-fixtures/
 transcode-logs/
 transcode/
+dist/
+build/
