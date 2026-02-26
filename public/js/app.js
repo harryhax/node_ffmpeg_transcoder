@@ -394,7 +394,22 @@ async function refreshToolHealthWarning() {
     return;
   }
 
-  const missingToolsWarningHtml = '⚠️ <strong>Warning:</strong> This program requires <strong>FFMPEG</strong> and <strong>FFPROBE</strong>. Please install them from <a href="https://ffmpeg.org/download.html" target="_blank" rel="noopener noreferrer">https://ffmpeg.org/download.html</a>, or use <strong>Settings</strong> to point directly to your ffmpeg/ffprobe folders if you already have them.';
+  const buildMissingToolsErrorHtml = (missingTools) => {
+    const normalized = Array.isArray(missingTools)
+      ? missingTools
+        .map((tool) => String(tool || '').trim().toLowerCase())
+        .filter(Boolean)
+      : [];
+
+    const uniqueMissing = [...new Set(normalized)];
+    const missingText = uniqueMissing.length === 1
+      ? `<strong>${uniqueMissing[0]}</strong>`
+      : uniqueMissing.length > 1
+        ? `<strong>${uniqueMissing.join('</strong> and <strong>')}</strong>`
+        : '<strong>FFMPEG</strong> and <strong>FFPROBE</strong>';
+
+    return `⛔ <strong>Critical Error:</strong> Missing required tool(s): ${missingText}. Install from <a href="https://ffmpeg.org/download.html" target="_blank" rel="noopener noreferrer">https://ffmpeg.org/download.html</a>, or use <strong>Settings</strong> to point directly to your ffmpeg/ffprobe folders if already installed.`;
+  };
 
   try {
     const response = await fetch('/api/options/tool-health');
@@ -413,10 +428,17 @@ async function refreshToolHealthWarning() {
     }
 
     ffmpegWarning.classList.remove('d-none');
-    ffmpegWarning.innerHTML = missingToolsWarningHtml;
+    const missingTools = [];
+    if (!ffmpegOk) {
+      missingTools.push('ffmpeg');
+    }
+    if (!ffprobeOk) {
+      missingTools.push('ffprobe');
+    }
+    ffmpegWarning.innerHTML = buildMissingToolsErrorHtml(missingTools);
   } catch (error) {
     ffmpegWarning.classList.remove('d-none');
-    ffmpegWarning.innerHTML = missingToolsWarningHtml;
+    ffmpegWarning.innerHTML = buildMissingToolsErrorHtml(['ffmpeg', 'ffprobe']);
   }
 }
 
