@@ -1,5 +1,5 @@
 import { parentPort, workerData } from 'node:worker_threads';
-import { runAudit } from '../src/audit-core.js';
+import { runAudit } from '../services/auditCore.js';
 
 async function main() {
   const { root, criteria } = workerData || {};

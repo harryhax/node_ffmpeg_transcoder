@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { Worker } from 'node:worker_threads';
-import { inspectWithFallback, normalizeBitrateToBps } from '../src/audit-core.js';
+import { inspectWithFallback, normalizeBitrateToBps } from './auditCore.js';
 import { getFfprobeCommand } from './optionsService.js';
 
 const VALID_OPERATORS = new Set(['>=', '<=', '=']);

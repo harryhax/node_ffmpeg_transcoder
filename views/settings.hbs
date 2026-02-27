@@ -1,0 +1,179 @@
+<main class="container py-4">
+  <div class="card mb-4">
+    <div class="card-header fw-bold d-flex align-items-center gap-2">
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="bi bi-sliders" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <path fill-rule="evenodd" d="M11.5 2a.5.5 0 0 1 .5.5V3h3a.5.5 0 0 1 0 1h-3v.5a.5.5 0 0 1-1 0V4h-7v.5a.5.5 0 0 1-1 0V4H1a.5.5 0 0 1 0-1h2V2.5a.5.5 0 0 1 1 0V3h7v-.5a.5.5 0 0 1 .5-.5M4 8a.5.5 0 0 1 .5.5V9h10a.5.5 0 0 1 0 1h-10v.5a.5.5 0 0 1-1 0V10H1a.5.5 0 0 1 0-1h2.5v-.5A.5.5 0 0 1 4 8m7.5 4a.5.5 0 0 1 .5.5V13h3a.5.5 0 0 1 0 1h-3v.5a.5.5 0 0 1-1 0V14h-10a.5.5 0 0 1 0-1h10v-.5a.5.5 0 0 1 .5-.5"/>
+      </svg>
+      <span>Scan/Transcode Options</span>
+    </div>
+    <div class="card-body">
+      <div class="form-text mb-2">Choose whether the audit form shows all codecs or a focused top 10 list.</div>
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="show-common-codecs" />
+        <label class="form-check-label" for="show-common-codecs">
+          Show most common codecs only (Top 10)
+        </label>
+      </div>
+      <div class="mt-3" style="max-width: 320px;">
+        <label for="video-bitrate-tolerance-setting" class="form-label">Video bitrate tolerance for all bitrate rules</label>
+        <div class="input-group">
+          <input id="video-bitrate-tolerance-setting" class="form-control" type="number" min="0" max="100" step="1" value="10" />
+          <span class="input-group-text">%</span>
+        </div>
+      </div>
+      <div id="codec-setting-status" class="form-text mt-2"></div>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-header fw-bold d-flex align-items-center gap-2">
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="bi bi-gear-fill" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <path d="M9.405 1.05c-.413-1.4-2.397-1.4-2.81 0l-.1.34a1.464 1.464 0 0 1-2.105.872l-.31-.173c-1.248-.696-2.69.745-1.994 1.993l.173.31a1.464 1.464 0 0 1-.872 2.105l-.34.1c-1.4.413-1.4 2.397 0 2.81l.34.1c.91.267 1.297 1.366.872 2.105l-.173.31c-.696 1.248.746 2.69 1.994 1.994l.31-.173a1.464 1.464 0 0 1 2.105.872l.1.34c.413 1.4 2.397 1.4 2.81 0l.1-.34a1.464 1.464 0 0 1 2.105-.872l.31.173c1.248.696 2.69-.746 1.994-1.994l-.173-.31a1.464 1.464 0 0 1 .872-2.105l.34-.1c1.4-.413 1.4-2.397 0-2.81l-.34-.1a1.464 1.464 0 0 1-.872-2.105l.173-.31c.696-1.248-.746-2.69-1.994-1.993l-.31.173a1.464 1.464 0 0 1-2.105-.872zM8 10.93a2.93 2.93 0 1 1 0-5.86 2.93 2.93 0 0 1 0 5.86"/>
+      </svg>
+      <span>Settings</span>
+    </div>
+    <div class="card-body">
+      <div class="form-text mb-2">Configure general defaults used by audit and transcode.</div>
+      <div class="mb-3">
+        <label for="transcode-location-setting" class="form-label">Transcode location (server folder)</label>
+        <input id="transcode-location-setting" class="form-control" type="text" placeholder="/tmp/transcode or /Users/yourname/TranscodeTemp" />
+        <div class="form-text">Optional. If set, files are copied here for transcoding, then copied back after completion.</div>
+      </div>
+      <div class="mb-3">
+        <label for="ffmpeg-dir-setting" class="form-label">FFmpeg folder override</label>
+        <input id="ffmpeg-dir-setting" class="form-control" type="text" placeholder="/opt/homebrew/bin" />
+        <div class="form-text">Optional. Enter the folder containing ffmpeg (for example: /opt/homebrew/bin). Do not enter the ffmpeg executable file path. Leave blank to use system default.</div>
+      </div>
+      <div class="mb-3">
+        <label for="ffprobe-dir-setting" class="form-label">FFprobe folder override</label>
+        <input id="ffprobe-dir-setting" class="form-control" type="text" placeholder="/opt/homebrew/bin" />
+        <div class="form-text">Optional. Enter the folder containing ffprobe (for example: /opt/homebrew/bin). Do not enter the ffprobe executable file path. Leave blank to use system default.</div>
+      </div>
+      <div class="form-check mt-3">
+        <input class="form-check-input" type="checkbox" id="save-transcode-log-setting" />
+        <label class="form-check-label" for="save-transcode-log-setting">
+          Save per-file transcode log (.log)
+        </label>
+      </div>
+      <div id="advanced-setting-status" class="form-text mt-2"></div>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-header fw-bold d-flex align-items-center gap-2">
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="bi bi-battery-half" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <path d="M2 6h10v4H2z"/>
+        <path d="M2 4a2 2 0 0 0-2 2v4a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm13 5.5a1.5 1.5 0 0 0 0-3z"/>
+      </svg>
+      <span>Power Management</span>
+    </div>
+    <div class="card-body">
+      <div class="form-text mb-2">Set battery thresholds to pause long transcodes and resume only when power is healthier.</div>
+      <div class="row g-3 align-items-end">
+        <div class="col-md-6">
+          <label for="start-battery-pct-setting" class="form-label">Start transcode only if battery is above</label>
+          <div class="input-group">
+            <input id="start-battery-pct-setting" class="form-control" type="number" min="1" max="99" step="1" placeholder="optional" />
+            <span class="input-group-text">%</span>
+          </div>
+        </div>
+
+        <div class="col-md-6">
+          <label for="pause-battery-pct-setting" class="form-label">Pause transcode if battery is at or below</label>
+          <div class="input-group">
+            <input id="pause-battery-pct-setting" class="form-control" type="number" min="1" max="99" step="1" placeholder="optional" />
+            <span class="input-group-text">%</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card mb-4">
+    <div class="card-header fw-bold d-flex align-items-center gap-2">
+      <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="bi bi-beaker" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+        <path d="M6.5 0a.5.5 0 0 0 0 1H7v2.117L3.22 9.69A1.5 1.5 0 0 0 4.5 12h7a1.5 1.5 0 0 0 1.28-2.31L9 3.117V1h.5a.5.5 0 0 0 0-1zM8 4.5 11.78 11H4.22z"/>
+      </svg>
+      <span>Smoke Test Generator</span>
+    </div>
+    <div class="card-body">
+      <form id="smoke-form" class="row g-3 align-items-end">
+        <div class="col-md-2">
+          <label for="smoke-count" class="form-label"># Files</label>
+          <input id="smoke-count" class="form-control" name="smokeCount" type="number" min="1" max="100" value="20" />
+        </div>
+        <div class="col-md-2">
+          <label for="smoke-min-duration-sec" class="form-label">Min length</label>
+          <div class="input-group">
+            <input id="smoke-min-duration-sec" class="form-control" name="smokeMinDurationSec" type="number" min="1" step="1" value="30" />
+            <span class="input-group-text">sec</span>
+          </div>
+        </div>
+        <div class="col-md-2">
+          <label for="smoke-max-duration-sec" class="form-label">Max length</label>
+          <div class="input-group">
+            <input id="smoke-max-duration-sec" class="form-control" name="smokeMaxDurationSec" type="number" min="1" step="1" value="120" />
+            <span class="input-group-text">sec</span>
+          </div>
+        </div>
+        <div class="col-md-2">
+          <label for="smoke-min-bitrate-kbps" class="form-label">Min bitrate</label>
+          <div class="input-group">
+            <input id="smoke-min-bitrate-kbps" class="form-control" name="smokeMinBitrateKbps" type="number" min="300" max="100000" step="100" value="2500" />
+            <span class="input-group-text">k</span>
+          </div>
+        </div>
+        <div class="col-md-2">
+          <label for="smoke-max-bitrate-kbps" class="form-label">Max bitrate</label>
+          <div class="input-group">
+            <input id="smoke-max-bitrate-kbps" class="form-control" name="smokeMaxBitrateKbps" type="number" min="300" max="100000" step="100" value="9000" />
+            <span class="input-group-text">k</span>
+          </div>
+        </div>
+        <div class="col-md-2">
+          <label for="smoke-mode" class="form-label">Mode</label>
+          <select id="smoke-mode" class="form-select" name="smokeMode">
+            <option value="random" selected>Fully random</option>
+            <option value="combos">All match/no match combos</option>
+            <option value="both">Both</option>
+          </select>
+        </div>
+        <div class="col-md-2">
+          <button id="smoke-btn" class="btn btn-secondary" type="submit">Generate Smoke Test</button>
+        </div>
+        <div class="col-12">
+          <button id="smoke-advanced-toggle" class="btn btn-sm btn-outline-secondary" type="button">Advanced</button>
+        </div>
+        <div id="smoke-advanced-section" class="col-12 d-none">
+          <div class="border rounded p-3">
+            <div class="d-flex align-items-center justify-content-between gap-2 mb-2">
+              <div class="fw-semibold">Video codecs to use</div>
+              <div class="d-flex gap-2">
+                <button id="smoke-codecs-select-gpu" class="btn btn-sm btn-outline-secondary" type="button">Select GPU</button>
+                <button id="smoke-codecs-select-all" class="btn btn-sm btn-outline-secondary" type="button">Select All</button>
+              </div>
+            </div>
+            <div id="smoke-codec-checkboxes" class="row g-2"></div>
+            <div class="form-text mt-2">Select one or more codecs. If none are selected, all supported codecs are used.</div>
+          </div>
+        </div>
+        <div class="col-12">
+          <div id="smoke-status" class="form-text"></div>
+          <div id="smoke-gpu-codecs-status" class="form-text mt-1"></div>
+        </div>
+      </form>
+
+      <div id="smoke-output-wrap" class="card border-secondary mt-3 d-none">
+        <div class="card-header py-2 d-flex align-items-center justify-content-between">
+          <span>Smoke Generator Output</span>
+          <button id="smoke-cancel-inline" class="btn btn-sm btn-danger d-none" type="button">Cancel</button>
+        </div>
+        <div class="card-body py-2">
+          <pre id="smoke-output" class="mb-0" style="max-height: 220px; overflow: auto; white-space: pre-wrap;"></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script type="module" src="/js/settings.js"></script>

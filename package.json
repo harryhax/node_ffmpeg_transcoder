@@ -3,18 +3,15 @@
   "version": "1.0.0",
   "description": "Audit video encodings with FFprobe and generate smoke-test sample media.",
   "type": "module",
-  "bin": {
-    "video-audit": "./src/video-audit.js"
-  },
   "scripts": {
-    "check": "node --check src/audit-core.js && node --check src/video-audit.js && node --check src/smoke-test.js && node --check workers/auditWorker.js && node --check services/auditService.js && node --check services/optionsService.js && node --check controllers/auditController.js && node --check controllers/optionsController.js && node --check controllers/smokeTestController.js && node --check controllers/statsController.js && node --check controllers/transcodeController.js && node --check routes/audit.js && node --check routes/options.js && node --check routes/smokeTest.js && node --check routes/stats.js && node --check routes/transcode.js && node --check public/js/app.js && node --check public/js/settings.js && node --check server.js",
-    "audit": "node src/video-audit.js",
-    "smoke-test": "node src/smoke-test.js",
+    "check": "node --check services/auditCore.js && node --check cli/smoke-test.js && node --check workers/auditWorker.js && node --check services/auditService.js && node --check services/optionsService.js && node --check controllers/auditController.js && node --check controllers/optionsController.js && node --check controllers/smokeTestController.js && node --check controllers/statsController.js && node --check controllers/transcodeController.js && node --check routes/audit.js && node --check routes/options.js && node --check routes/smokeTest.js && node --check routes/stats.js && node --check routes/transcode.js && node --check public/js/app.js && node --check public/js/settings.js && node --check public/js/readme.js && node --check server.js",
+    "smoke-test": "node cli/smoke-test.js",
     "server": "node server.js",
     "server:no-sleep": "caffeinate -dimsu node server.js"
   },
   "dependencies": {
-    "express": "^4.21.2"
+    "express": "^4.21.2",
+    "express-handlebars": "^8.0.6"
   },
   "engines": {
     "node": ">=18"

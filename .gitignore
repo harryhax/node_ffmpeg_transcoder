@@ -4,3 +4,4 @@ transcode-logs/
 transcode/
 dist/
 build/
+package-lock.json

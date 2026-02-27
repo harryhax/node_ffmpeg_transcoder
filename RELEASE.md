@@ -18,8 +18,8 @@ This archive contains the distributable version of the Video Encoding Auditor & 
 - Node.js 18+
 - ffmpeg and ffprobe in your PATH
 
-## For CLI usage
-- See README.md for audit and smoke-test commands.
+## Optional utility usage
+- See README.md for smoke-test fixture command.
 
 ## License
 - MIT (or your preferred license)

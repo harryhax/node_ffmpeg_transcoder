@@ -37,7 +37,7 @@ function parseArgs(argv) {
 }
 
 function printHelp() {
-  console.log(`Smoke Test Fixture Generator\n\nUsage:\n  node src/smoke-test.js [options]\n\nOptions:\n  --out <path>        Output folder (default: ./smoke-fixtures)\n  --duration <secs>   Clip duration in seconds (default: 4)\n  --no-overwrite      Do not pass -y to ffmpeg\n  -h, --help          Show help\n`);
+  console.log(`Smoke Test Fixture Generator\n\nUsage:\n  node cli/smoke-test.js [options]\n\nOptions:\n  --out <path>        Output folder (default: ./smoke-fixtures)\n  --duration <secs>   Clip duration in seconds (default: 4)\n  --no-overwrite      Do not pass -y to ffmpeg\n  -h, --help          Show help\n`);
 }
 
 function runFfmpeg(args) {

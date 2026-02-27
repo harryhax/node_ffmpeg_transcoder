@@ -1,99 +1,77 @@
-## Super Simple Setup (for everyone)
+# Plex Video Transcoder & Auditor
+
+Transcode Plex/media libraries with a simple web UI. The project audits files against codec/bitrate/channel rules, then batch transcodes selected files while streaming live progress.
+
+## Super Simple Setup
 
 1. Download or clone this project.
 2. Open a terminal in the project folder.
 3. Run:
-  ```bash
-  ./install.sh
-  ```
-4. Follow the prompts. When finished, open [http://localhost:3000](http://localhost:3000) in your browser.
+   ```bash
+   ./install.sh
+   ```
+4. Follow the prompts, then open http://localhost:3000.
 
-If you see errors, make sure Node.js, ffmpeg, and ffprobe are installed. That's it!
-# Project Description
+## Requirements
 
-This project helps you transcode Plex movies and videos to save drive space, reduce storage costs, and optimize your media library. Easier to use than Tdarr, it offers a web UI and CLI for batch auditing and transcoding. Scan, filter, and convert files to efficient codecs with clear feedback—same results as Tdarr, but faster and simpler for Plex users.
+- Node.js 18+
+- `ffmpeg` and `ffprobe`
 
-# Plex Video Transcoder & Auditor
+You can either:
+- keep `ffmpeg`/`ffprobe` available in your system PATH, or
+- set folder overrides in Settings (folder path only, not the executable file path).
 
-Easily transcode your Plex movies and videos to save drive space and optimize your media library. This app is easier to use than Tdarr, but delivers the same results—scan, filter, and convert files with a simple web interface or CLI.
+## Run the App
 
-## Quick Start
-
-1. **Install Requirements:**
-  - Node.js 18+
-  - `ffmpeg` and `ffprobe` installed and available in your PATH
-
-2. **Start the Web UI:**
-  ```bash
-  npm run server
-  ```
-  Open [http://localhost:3000](http://localhost:3000) in your browser.
-
-3. **Audit & Transcode:**
-  - Pick a root folder (where your Plex media is stored)
-  - Choose video/audio codecs and settings
-  - Run an audit to see which files match your criteria
-  - Select files and transcode them to save space
-  - Optionally, delete originals after transcoding
-
-## Command Line Usage
-
-**Audit videos:**
 ```bash
-npm run audit -- --root /path/to/media --video-codec hevc --video-bitrate 6000k --audio-codec ac3 --audio-channels 6
+npm run server
 ```
 
-**Generate smoke-test fixtures:**
-```bash
-npm run smoke-test -- --out ./smoke-fixtures
-```
+Then open http://localhost:3000.
 
-## Features
-
-- User-friendly web interface (Express + Bootstrap)
-- Batch audit and transcode for Plex libraries
-- Folder picker and codec dropdowns (auto-detected from ffmpeg)
-- Customizable bitrate and channel rules
-- Select-all and batch operations
-- Delete original files after transcode (optional)
-- Dark theme for comfortable viewing
-- CLI tools for advanced users
-
-## Troubleshooting
-
-- Make sure `ffmpeg` and `ffprobe` are installed and in your PATH
-- Use Node.js 18 or newer
-- If you see errors, check permissions on your media folders
-- For help, open an issue or ask in discussions
-
-### macOS Sleep/Power (Important for long transcodes)
-
-If your Intel Mac sleeps during a transcode, jobs can fail and external drives may remount read-only after an unclean interruption.
-
-Start the server in no-sleep mode:
+### macOS no-sleep mode (recommended for long transcodes)
 
 ```bash
 npm run server:no-sleep
 ```
 
-Optional power profile tuning while transcoding:
+## Web UI Workflow
+
+1. Pick a root folder.
+2. Choose codec/bitrate/channel rules.
+3. Run audit.
+4. Select matching files.
+5. Run transcode.
+
+The UI includes:
+- live per-file and overall transcode progress
+- transcode cancel support
+- per-file outcome highlighting
+- optional per-file `.log` output
+- top-level critical error banner when required tools are missing
+
+## Optional Utility
+
+Smoke test fixture generation:
 
 ```bash
-sudo pmset -c sleep 0 displaysleep 30 disksleep 10 lowpowermode 0
-sudo pmset -b sleep 0 displaysleep 15 disksleep 10 lowpowermode 0
-pmset -g custom
+npm run smoke-test -- --out ./smoke-fixtures
 ```
+
+## Troubleshooting
+
+- Run `npm run check` to validate project JS syntax.
+- If tool checks fail, install `ffmpeg`/`ffprobe` or set folder overrides in Settings.
+- Verify read/write permissions for media folders and transcode target locations.
+
+## Packaging
+
+See [PACKAGING.md](PACKAGING.md) for distribution options.
 
 ## Project Structure
 
-- `server.js` - Express app and static hosting
-- `routes/` - API endpoints
-- `controllers/` - Request handlers
-- `services/` - Core logic (audit, options)
-- `public/` - Web UI (HTML, JS, CSS)
-
----
-Transcode your Plex library, save space, and enjoy a simpler workflow than Tdarr!
-- Video bitrate numeric input with `k` units
-- Audio channels typical dropdown (`Any`, `1`, `2`, `6`, `8`)
-- Rule operators for bitrate/channels: `>=` (minimum), `<=` (maximum), `=` (exact/approx)
+- `server.js` — Express app and static hosting
+- `routes/` — API routes
+- `controllers/` — request handlers/orchestration
+- `services/` — reusable transcode/audit services
+- `public/` — web UI assets
