@@ -2,6 +2,7 @@ import { renderMessage } from './utils.js';
 import { setSelectOptions, renderResults } from './ui.js';
 
 const AUDIT_SETTINGS_KEY = 'auditFormSettings';
+const DEFAULT_SCAN_EXTENSIONS = '.mp4,.mkv,.mov,.avi,.wmv,.flv,.webm,.m4v,.mpg,.mpeg,.ts';
 let activeAuditAbortController = null;
 
 function readSavedBitrateTolerancePct() {
@@ -18,6 +19,23 @@ function readSavedBitrateTolerancePct() {
     return value;
   } catch {
     return '10';
+  }
+}
+
+function readSavedScanExtensions() {
+  try {
+    const raw = globalThis.localStorage?.getItem(AUDIT_SETTINGS_KEY);
+    if (!raw) {
+      return DEFAULT_SCAN_EXTENSIONS;
+    }
+    const parsed = JSON.parse(raw);
+    if (typeof parsed?.scanExtensions !== 'string') {
+      return DEFAULT_SCAN_EXTENSIONS;
+    }
+    const value = parsed.scanExtensions.trim();
+    return value || DEFAULT_SCAN_EXTENSIONS;
+  } catch {
+    return DEFAULT_SCAN_EXTENSIONS;
   }
 }
 
@@ -72,8 +90,10 @@ export async function runAudit(form, runButton, cancelScanButton, message, resul
   };
   setScanButtonState(runButton, cancelScanButton, true);
   message.innerHTML = '';
+  resultsBody.innerHTML = '<tr><td colspan="11" class="text-muted">Scanning files...</td></tr>';
   if (!payload.root || !String(payload.root).trim()) {
     setScanButtonState(runButton, cancelScanButton, false);
+    resultsBody.innerHTML = '<tr><td colspan="11" class="text-muted">Scan files to see results.</td></tr>';
     renderMessage(message, 'danger', 'Please enter a root folder path on the server.');
     return;
   }
@@ -92,6 +112,10 @@ export async function runAudit(form, runButton, cancelScanButton, message, resul
 
   try {
     const listQuery = new URLSearchParams({ root: String(payload.root).trim() });
+    const scanExtensions = readSavedScanExtensions();
+    if (scanExtensions) {
+      listQuery.set('scanExtensions', scanExtensions);
+    }
     const listResponse = await fetch(`/api/audit/files?${listQuery.toString()}`, {
       signal: abortController.signal
     });

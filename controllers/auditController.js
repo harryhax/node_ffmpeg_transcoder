@@ -33,10 +33,11 @@ export async function runAuditFilesHandler(req, res) {
 
 export async function listAuditFilesHandler(req, res) {
   const root = String(req.query?.root || '.').trim() || '.';
+  const scanExtensions = String(req.query?.scanExtensions || '').trim();
 
   try {
     const rootPath = path.resolve(root);
-    const files = await collectVideoFiles(rootPath);
+    const files = await collectVideoFiles(rootPath, scanExtensions);
     res.json({
       ok: true,
       rootPath,

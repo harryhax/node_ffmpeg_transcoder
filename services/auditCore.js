@@ -6,6 +6,25 @@ export const VIDEO_EXTENSIONS = new Set([
   '.mp4', '.mkv', '.mov', '.avi', '.wmv', '.flv', '.webm', '.m4v', '.mpg', '.mpeg', '.ts'
 ]);
 
+function normalizeScanExtensions(input) {
+  if (!input) {
+    return new Set(VIDEO_EXTENSIONS);
+  }
+
+  const values = Array.isArray(input) ? input : String(input).split(',');
+  const normalized = new Set();
+
+  for (const value of values) {
+    const trimmed = String(value || '').trim().toLowerCase();
+    if (!trimmed) {
+      continue;
+    }
+    normalized.add(trimmed.startsWith('.') ? trimmed : `.${trimmed}`);
+  }
+
+  return normalized.size ? normalized : new Set(VIDEO_EXTENSIONS);
+}
+
 export function normalizeBitrateToBps(input) {
   if (!input) {
     return undefined;
@@ -41,7 +60,8 @@ export function formatSize(bytes) {
   return `${value.toFixed(2)}${sizes[i]}`;
 }
 
-export async function collectVideoFiles(rootDir) {
+export async function collectVideoFiles(rootDir, scanExtensions = null) {
+  const allowedExtensions = normalizeScanExtensions(scanExtensions);
   const files = [];
   const queue = [path.resolve(rootDir)];
 
@@ -61,7 +81,7 @@ export async function collectVideoFiles(rootDir) {
         queue.push(fullPath);
       } else if (entry.isFile()) {
         const ext = path.extname(entry.name).toLowerCase();
-        if (VIDEO_EXTENSIONS.has(ext)) {
+        if (allowedExtensions.has(ext)) {
           try {
             const stat = await fs.stat(fullPath);
             files.push({
@@ -279,7 +299,7 @@ export async function inspectWithFallback(file, target) {
 
 export async function runAudit({ root, criteria }) {
   const rootPath = path.resolve(root);
-  const files = await collectVideoFiles(rootPath);
+  const files = await collectVideoFiles(rootPath, criteria?.scanExtensions);
 
   const results = [];
   const BATCH_SIZE = 10;

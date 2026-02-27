@@ -164,6 +164,7 @@ function saveAuditSettings() {
   const payload = {
     root: data.get('root') || '',
     transcodeLocation: typeof existing.transcodeLocation === 'string' ? existing.transcodeLocation : '',
+    scanExtensions: typeof existing.scanExtensions === 'string' ? existing.scanExtensions : '',
     videoCodec: data.get('videoCodec') || '',
     videoBitrateOp: data.get('videoBitrateOp') || '>=',
     videoBitrate: data.get('videoBitrate') || '',
@@ -1255,6 +1256,7 @@ resultsBody.addEventListener('click', function (e) {
     const idx = parseInt(btn.getAttribute('data-row-index'), 10);
     const row = window._lastAuditRows?.[idx];
     if (!row) return;
+
     // Populate modal
     document.getElementById('detailsFilePath').textContent = row.fullPath || row.filePath || row.fileName;
     const rowState = getRowState(row);

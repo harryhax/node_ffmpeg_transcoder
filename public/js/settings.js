@@ -1,6 +1,7 @@
 const CODEC_VISIBILITY_KEY = 'codecVisibilityMode';
 const AUDIT_SETTINGS_KEY = 'auditFormSettings';
 const SMOKE_SETTINGS_KEY = 'smokeGeneratorSettings';
+const DEFAULT_SCAN_EXTENSIONS = '.mp4,.mkv,.mov,.avi,.wmv,.flv,.webm,.m4v,.mpg,.mpeg,.ts';
 
 const showCommonCodecsCheckbox = document.getElementById('show-common-codecs');
 const codecSettingStatus = document.getElementById('codec-setting-status');
@@ -8,11 +9,22 @@ const transcodeLocationSetting = document.getElementById('transcode-location-set
 const ffmpegDirSetting = document.getElementById('ffmpeg-dir-setting');
 const ffprobeDirSetting = document.getElementById('ffprobe-dir-setting');
 const videoBitrateToleranceSetting = document.getElementById('video-bitrate-tolerance-setting');
+const scanExtensionsSetting = document.getElementById('scan-extensions-setting');
 const pauseBatteryPctSetting = document.getElementById('pause-battery-pct-setting');
 const startBatteryPctSetting = document.getElementById('start-battery-pct-setting');
 const saveTranscodeLogSetting = document.getElementById('save-transcode-log-setting');
 const advancedSettingStatus = document.getElementById('advanced-setting-status');
 let toolPathSaveTimeout = null;
+
+function normalizeScanExtensionsInput(value) {
+  const parts = String(value || '')
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
+    .map((item) => (item.startsWith('.') ? item : `.${item}`));
+
+  return Array.from(new Set(parts)).join(',');
+}
 
 function loadAuditSettings() {
   try {
@@ -133,6 +145,20 @@ if (showCommonCodecsCheckbox) {
       const safe = Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 10;
       videoBitrateToleranceSetting.value = String(safe);
       saveAuditSettingsPatch({ videoBitrateTolerancePct: String(safe) });
+      renderAdvancedSettingStatus();
+    });
+  }
+
+  if (scanExtensionsSetting) {
+    const normalizedSavedExtensions = normalizeScanExtensionsInput(saved.scanExtensions || DEFAULT_SCAN_EXTENSIONS);
+    scanExtensionsSetting.value = normalizedSavedExtensions;
+    if (typeof saved.scanExtensions !== 'string' || !saved.scanExtensions.trim()) {
+      saveAuditSettingsPatch({ scanExtensions: normalizedSavedExtensions });
+    }
+    scanExtensionsSetting.addEventListener('input', () => {
+      const normalized = normalizeScanExtensionsInput(scanExtensionsSetting.value);
+      scanExtensionsSetting.value = normalized;
+      saveAuditSettingsPatch({ scanExtensions: normalized });
       renderAdvancedSettingStatus();
     });
   }

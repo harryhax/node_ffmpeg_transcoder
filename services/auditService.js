@@ -39,6 +39,7 @@ function runAuditInWorker(root, criteria) {
 export function buildAuditInput(body = {}) {
   return {
     root: body.root || '.',
+    scanExtensions: body.scanExtensions || '',
     videoCodec: body.videoCodec || '',
     videoBitrate: body.videoBitrate || '',
     videoBitrateOp: body.videoBitrateOp || '>=',
@@ -54,6 +55,7 @@ export function buildCriteria(input) {
   const audioChannelsOp = normalizeOperator(input.audioChannelsOp, '>=');
 
   const criteria = {
+    scanExtensions: input.scanExtensions || '',
     videoCodec: input.videoCodec ? String(input.videoCodec).trim().toLowerCase() : undefined,
     videoBitrate: input.videoBitrate ? normalizeBitrateToBps(input.videoBitrate) : undefined,
     videoBitrateOp,

@@ -58,7 +58,6 @@ export function renderResults(rows, resultsBody, setupEnhancements) {
     const rowClass = getRowClass(rowState);
     const fileName = row.fileName || 'unknown';
     const fullPath = row.filePath || row.fullPath || fileName;
-    const detailsDisabled = row.issues > 0 ? '' : ' disabled';
     // Use raw size for sorting, MB for display
     const sizeMB = formatSizeMB(row.rawSize || row.size || 0);
     const safeVideoCodec = row.videoCodec || 'unknown';
@@ -86,11 +85,11 @@ export function renderResults(rows, resultsBody, setupEnhancements) {
         <td data-sort="${Number.isFinite(row.audioChannels) ? row.audioChannels : 0}" class="${getCriteriaCellClass(rowState, row.checks?.audioChannels)}">${escapeHtml(String(safeAudioChannels))}</td>
         <td data-sort="${row.issues}">${row.issues}</td>
         <td>
-          <span data-bs-toggle="tooltip" data-bs-title="${escapeHtml(fullPath)}">${escapeHtml(truncateText(fileName))}</span>
+          <span>${escapeHtml(truncateText(fileName))}</span>
         </td>
         <td>
           <div class="d-inline-flex align-items-center gap-1">
-          <button type="button" class="btn btn-sm details-icon-btn" data-row-index="${row.index - 1}" title="Show details"${detailsDisabled} aria-label="Show details">
+          <button type="button" class="btn btn-sm details-icon-btn" data-row-index="${row.index - 1}" data-action="details" title="Show details" aria-label="Show details">
             <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" fill="currentColor" class="bi bi-file-earmark-code-fill" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
               <path d="M9.293 0H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V4.707L9.293 0zM9.5 3.5V1.707L12.293 4.5H10.5a1 1 0 0 1-1-1zM8.646 9.146a.5.5 0 1 1 .708.708L8.207 11l1.147 1.146a.5.5 0 0 1-.708.708l-1.5-1.5a.5.5 0 0 1 0-.708l1.5-1.5zm-2.5 0a.5.5 0 0 1 .708 0l1.5 1.5a.5.5 0 0 1 0 .708l-1.5 1.5a.5.5 0 1 1-.708-.708L7.293 11 6.146 9.854a.5.5 0 0 1 0-.708z"/>
             </svg>
