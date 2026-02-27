@@ -26,7 +26,15 @@ export async function getDirectoriesHandler(req, res) {
 
   try {
     const directories = await listDirectories(base, maxDepth);
-    res.json({ ok: true, base, directories });
+    const resolvedBase = path.resolve(base);
+    const parent = path.dirname(resolvedBase);
+    res.json({
+      ok: true,
+      base,
+      resolvedBase,
+      parent: parent !== resolvedBase ? parent : null,
+      directories
+    });
   } catch (error) {
     res.status(400).json({ ok: false, error: error.message });
   }

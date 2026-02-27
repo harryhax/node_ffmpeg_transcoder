@@ -8,7 +8,14 @@ body {
 }
 
 .navbar .navbar-brand {
-  color: #e9ecef;
+  color: #fff;
+}
+
+.navbar .nav-link,
+.navbar .nav-link.active,
+.navbar .nav-link:hover,
+.navbar .nav-link:focus {
+  color: #fff !important;
 }
 
 .navbar .btn-outline-secondary {

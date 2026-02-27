@@ -231,6 +231,7 @@ function applySavedAuditSettings(settings) {
 // DOM elements
 const form = document.getElementById('audit-form');
 const runButton = document.getElementById('run-btn');
+const cancelScanButton = document.getElementById('cancel-scan-btn');
 const message = document.getElementById('message');
 const resultsBody = document.getElementById('results-body');
 const rootInput = document.getElementById('root');
@@ -1021,10 +1022,14 @@ form.addEventListener('change', saveAuditSettings);
 form.addEventListener('input', saveAuditSettings);
 
 if (rootPicker) {
-  rootPicker.addEventListener('change', () => {
+  rootPicker.addEventListener('change', async () => {
     if (rootInput && rootPicker.value) {
       rootInput.value = rootPicker.value;
       saveAuditSettings();
+      try {
+        await loadDirectories(rootInput, rootPicker);
+      } catch {
+      }
       const restored = restoreCachedScanResultsForCurrentRoot();
       if (restored) {
         renderMessage(message, 'info', `Restored saved scan results for ${rootInput.value}.`);
@@ -1129,7 +1134,7 @@ function renderResultsWithStore(rows, ...args) {
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   saveAuditSettings();
-  await runAudit(form, runButton, message, resultsBody, (rows, summary) => {
+  await runAudit(form, runButton, cancelScanButton, message, resultsBody, (rows, summary) => {
     renderResultsWithStore(rows, resultsBody, () => {});
     updateOriginalTotalFromRows(rows);
     saveCachedScanResults(rows, summary || {});
