@@ -6,7 +6,6 @@ import { readJsonStorage, readStringStorage, writeJsonStorage, writeStringStorag
 
 const CODEC_VISIBILITY_KEY = 'codecVisibilityMode';
 const AUDIT_SETTINGS_KEY = 'auditFormSettings';
-const LAST_SCAN_RESULTS_KEY = 'lastAuditScanResults';
 const OUTPUT_COLLAPSED_KEY = 'activityConsoleCollapsed';
 const COMMON_VIDEO_CODECS = ['hevc_videotoolbox', 'hevc', 'h264_videotoolbox', 'h264', 'libx265', 'libx264', 'vp9', 'libvpx-vp9', 'mpeg4', 'av1'];
 const COMMON_AUDIO_CODECS = ['ac3', 'aac', 'eac3', 'libopus', 'opus', 'mp3', 'flac', 'dts', 'pcm_s16le', 'vorbis'];
@@ -43,103 +42,6 @@ function selectTopCodecs(allCodecs, preferredOrder, limit = 10) {
 function loadSavedAuditSettings() {
   const parsed = readJsonStorage(AUDIT_SETTINGS_KEY, {});
   return parsed && typeof parsed === 'object' ? parsed : {};
-}
-
-function loadCachedScanResults() {
-  const parsed = readJsonStorage(LAST_SCAN_RESULTS_KEY, null);
-  if (!parsed || typeof parsed !== 'object') {
-    return null;
-  }
-
-  // Backward-compatible shape: { root, rows, summary }
-  if (typeof parsed.root === 'string' && Array.isArray(parsed.rows)) {
-    return {
-      version: 1,
-      byRoot: {
-        [parsed.root]: {
-          rows: parsed.rows,
-          summary: parsed.summary && typeof parsed.summary === 'object' ? parsed.summary : {},
-          savedAt: Number.isFinite(parsed.savedAt) ? parsed.savedAt : Date.now()
-        }
-      },
-      lastRoot: parsed.root
-    };
-  }
-
-  // New shape: { version, byRoot: { [root]: { rows, summary, savedAt } }, lastRoot }
-  if (!parsed.byRoot || typeof parsed.byRoot !== 'object') {
-    return null;
-  }
-
-  const byRoot = {};
-  for (const [root, entry] of Object.entries(parsed.byRoot)) {
-    if (typeof root !== 'string' || !entry || typeof entry !== 'object') {
-      continue;
-    }
-    if (!Array.isArray(entry.rows)) {
-      continue;
-    }
-    byRoot[root] = {
-      rows: entry.rows,
-      summary: entry.summary && typeof entry.summary === 'object' ? entry.summary : {},
-      savedAt: Number.isFinite(entry.savedAt) ? entry.savedAt : Date.now()
-    };
-  }
-
-  return {
-    version: 1,
-    byRoot,
-    lastRoot: typeof parsed.lastRoot === 'string' ? parsed.lastRoot : ''
-  };
-}
-
-function saveCachedScanResults(rows, summary = {}) {
-  if (!rootInput) {
-    return;
-  }
-
-  const root = String(rootInput.value || '').trim();
-  if (!root) {
-    return;
-  }
-
-  const existing = loadCachedScanResults() || { version: 1, byRoot: {}, lastRoot: '' };
-  const payload = {
-    version: 1,
-    byRoot: {
-      ...existing.byRoot,
-      [root]: {
-        rows: Array.isArray(rows) ? rows : [],
-        summary: summary && typeof summary === 'object' ? summary : {},
-        savedAt: Date.now()
-      }
-    },
-    lastRoot: root
-  };
-
-  writeJsonStorage(LAST_SCAN_RESULTS_KEY, payload);
-}
-
-function restoreCachedScanResultsForCurrentRoot() {
-  const cached = loadCachedScanResults();
-  if (!cached || !rootInput) {
-    return false;
-  }
-
-  const currentRoot = String(rootInput.value || '').trim();
-  if (!currentRoot) {
-    return false;
-  }
-
-  const entry = cached.byRoot?.[currentRoot];
-  if (!entry || !Array.isArray(entry.rows)) {
-    return false;
-  }
-
-  const rows = Array.isArray(entry.rows) ? entry.rows : [];
-  renderResultsWithStore(rows, resultsBody, () => {});
-  updateOriginalTotalFromRows(rows);
-  return true;
 }
 
 function saveAuditSettings() {
@@ -1186,12 +1088,7 @@ async function syncCodecDropdowns() {
         rootPicker.value = savedSettings.root;
       }
     }
-    const restored = restoreCachedScanResultsForCurrentRoot();
-    if (restored) {
-      writeUiMessage('info', `Restored saved scan results for ${rootInput?.value || './smoke-fixtures'}.`);
-    } else {
-      writeUiMessage('info', `Scan files using root folder: ${rootInput?.value || './smoke-fixtures'}.`);
-    }
+    writeUiMessage('info', `Scan files using root folder: ${rootInput?.value || './smoke-fixtures'}.`);
     await recoverTranscodeSessionIfRunning();
   } catch (error) {
     await refreshToolHealthWarning();
@@ -1216,12 +1113,7 @@ if (rootPicker) {
         await loadDirectories(rootInput, rootPicker);
       } catch {
       }
-      const restored = restoreCachedScanResultsForCurrentRoot();
-      if (restored) {
-        writeUiMessage('info', `Restored saved scan results for ${rootInput.value}.`);
-      } else {
-        writeUiMessage('info', `No saved scan results found for ${rootInput.value}.`);
-      }
+      writeUiMessage('info', `Root folder set to ${rootInput.value}.`);
     }
   });
 }
@@ -1229,10 +1121,7 @@ if (rootPicker) {
 if (rootInput) {
   rootInput.addEventListener('change', () => {
     saveAuditSettings();
-    const restored = restoreCachedScanResultsForCurrentRoot();
-    if (restored) {
-      writeUiMessage('info', `Restored saved scan results for ${rootInput.value}.`);
-    }
+    writeUiMessage('info', `Root folder set to ${rootInput.value}.`);
   });
 }
 
@@ -1299,7 +1188,6 @@ function renderResultsWithStore(rows, ...args) {
   window._lastAuditRows = rows;
   origRenderResults(rows, resultsBody, setupEnhancements);
   updateNetSavedFromRows(rows);
-  saveCachedScanResults(rows);
   if (activeTranscodingFilePath) {
     setActiveTranscodingRow(activeTranscodingFilePath);
   }
@@ -1351,7 +1239,6 @@ form.addEventListener('submit', async (event) => {
   await runAudit(form, runButton, cancelScanButton, resultsBody, (rows, summary) => {
     renderResultsWithStore(rows, resultsBody, () => {});
     updateOriginalTotalFromRows(rows);
-    saveCachedScanResults(rows, summary || {});
   }, {
     onStart: (rootPath) => {
       appendTranscodeOutput(`[status] Starting scan in ${rootPath}\n`);

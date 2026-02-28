@@ -10,7 +10,6 @@ import {
 const CODEC_VISIBILITY_KEY = 'codecVisibilityMode';
 const AUDIT_SETTINGS_KEY = 'auditFormSettings';
 const SMOKE_SETTINGS_KEY = 'smokeGeneratorSettings';
-const LAST_SCAN_RESULTS_KEY = 'lastAuditScanResults';
 const DEFAULT_SCAN_EXTENSIONS = '.mp4,.mkv,.mov,.avi,.wmv,.flv,.webm,.m4v,.mpg,.mpeg,.ts';
 
 const showCommonCodecsCheckbox = document.getElementById('show-common-codecs');
@@ -126,7 +125,6 @@ function clearAppLocalSettings() {
     CODEC_VISIBILITY_KEY,
     AUDIT_SETTINGS_KEY,
     SMOKE_SETTINGS_KEY,
-    LAST_SCAN_RESULTS_KEY,
   ]);
 }
 
