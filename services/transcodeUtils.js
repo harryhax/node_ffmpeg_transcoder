@@ -165,3 +165,98 @@ export function runFfprobeDuration(filePath) {
     });
   });
 }
+
+export function runFfprobeVideoBitrateKbps(filePath) {
+  return new Promise((resolve) => {
+    const args = ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', filePath];
+    const ffprobeCommand = getFfprobeCommand();
+
+    const child = spawn(ffprobeCommand, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.on('error', () => {
+      resolve(null);
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        resolve(null);
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(stdout || '{}');
+        const streamBitrates = Array.isArray(parsed?.streams)
+          ? parsed.streams
+              .filter((stream) => String(stream?.codec_type || '').toLowerCase() === 'video')
+              .map((stream) => Number.parseFloat(stream?.bit_rate))
+              .filter((value) => Number.isFinite(value) && value > 0)
+          : [];
+
+        const formatBitrate = Number.parseFloat(parsed?.format?.bit_rate);
+        const bitrateBps = streamBitrates.length
+          ? streamBitrates[0]
+          : (Number.isFinite(formatBitrate) && formatBitrate > 0 ? formatBitrate : null);
+
+        if (!Number.isFinite(bitrateBps) || bitrateBps <= 0) {
+          resolve(null);
+          return;
+        }
+
+        resolve(Math.max(1, Math.round(bitrateBps / 1000)));
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+}
+
+export function runFfprobeAudioBitrateKbps(filePath) {
+  return new Promise((resolve) => {
+    const args = ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', filePath];
+    const ffprobeCommand = getFfprobeCommand();
+
+    const child = spawn(ffprobeCommand, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stdout = '';
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString();
+    });
+
+    child.on('error', () => {
+      resolve(null);
+    });
+
+    child.on('close', (code) => {
+      if (code !== 0) {
+        resolve(null);
+        return;
+      }
+
+      try {
+        const parsed = JSON.parse(stdout || '{}');
+        const streamBitrates = Array.isArray(parsed?.streams)
+          ? parsed.streams
+              .filter((stream) => String(stream?.codec_type || '').toLowerCase() === 'audio')
+              .map((stream) => Number.parseFloat(stream?.bit_rate))
+              .filter((value) => Number.isFinite(value) && value > 0)
+          : [];
+
+        const bitrateBps = streamBitrates.length ? streamBitrates[0] : null;
+
+        if (!Number.isFinite(bitrateBps) || bitrateBps <= 0) {
+          resolve(null);
+          return;
+        }
+
+        resolve(Math.max(1, Math.round(bitrateBps / 1000)));
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+}

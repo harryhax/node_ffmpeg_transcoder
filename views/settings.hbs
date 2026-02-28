@@ -72,6 +72,13 @@
           Save per-file transcode log (.log)
         </label>
       </div>
+      <div class="form-check mt-3">
+        <input class="form-check-input" type="checkbox" id="cap-bitrate-to-source-setting" />
+        <label class="form-check-label" for="cap-bitrate-to-source-setting">
+          Prevent bitrate upscaling (cap target bitrate to source bitrate)
+        </label>
+        <div class="form-text">When enabled, if your selected transcode bitrate is higher than the file's current bitrate, the app uses the lower source bitrate instead.</div>
+      </div>
       <div id="advanced-setting-status" class="form-text mt-2"></div>
     </div>
   </div>

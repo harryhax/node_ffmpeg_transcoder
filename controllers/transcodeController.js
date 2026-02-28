@@ -15,10 +15,12 @@ import {
   writeTranscodeRunLog,
 } from "../services/transcodeLogging.js";
 import {
+  runFfprobeAudioBitrateKbps,
   buildFailLogPathFromOutput,
   buildLogPathFromOutput,
   buildOutputPath,
   extractProgressFromChunk,
+  runFfprobeVideoBitrateKbps,
   runFfprobeDuration,
 } from "../services/transcodeUtils.js";
 
@@ -52,6 +54,7 @@ function buildFfmpegArgs(input, output, opts) {
   if (opts.videoCodec) args.push("-c:v", opts.videoCodec);
   if (opts.videoBitrate) args.push("-b:v", `${opts.videoBitrate}k`);
   if (opts.audioCodec) args.push("-c:a", opts.audioCodec);
+  if (opts.audioBitrate) args.push("-b:a", `${opts.audioBitrate}k`);
   if (opts.audioChannels) args.push("-ac", opts.audioChannels);
   args.push(output);
   return args;
@@ -95,6 +98,17 @@ function getTranscodeSavingsSummary() {
     avgReductionPct,
     startedAt: transcodeSavingsTotals.startedAt,
   };
+}
+
+function resolveEffectiveBitrateKbps(requestedBitrate, sourceBitrateKbps) {
+  const requested = Number.parseInt(String(requestedBitrate || "").trim(), 10);
+  if (!Number.isFinite(requested) || requested <= 0) {
+    return requestedBitrate;
+  }
+  if (!Number.isFinite(sourceBitrateKbps) || sourceBitrateKbps <= 0) {
+    return String(requested);
+  }
+  return String(Math.min(requested, Math.round(sourceBitrateKbps)));
 }
 
 function getTranscodeLiveState() {
@@ -219,6 +233,7 @@ const transcode = async (req, res) => {
     files,
     videoCodec,
     audioCodec,
+    audioBitrate,
     videoBitrate,
     audioChannels,
     deleteOriginal,
@@ -226,10 +241,14 @@ const transcode = async (req, res) => {
     pauseBatteryPct,
     startBatteryPct,
     saveTranscodeLog,
+    capBitrateToSource,
   } = req.body;
   if (!Array.isArray(files) || !files.length) {
     return res.status(400).json({ ok: false, error: "No files provided." });
   }
+
+  const shouldCapBitrateToSource =
+    capBitrateToSource !== false && capBitrateToSource !== "false";
 
   let pauseBatteryThreshold = null;
   let startBatteryThreshold = null;
@@ -500,10 +519,70 @@ const transcode = async (req, res) => {
         workingOutput = buildOutputPath(file, { videoCodec, audioCodec });
         verificationOutput = workingOutput;
       }
+      const requestedVideoBitrateKbps = Number.parseInt(
+        String(videoBitrate || "").trim(),
+        10,
+      );
+      const requestedAudioBitrateKbps = Number.parseInt(
+        String(audioBitrate || "").trim(),
+        10,
+      );
+      const sourceVideoBitrateKbps =
+        shouldCapBitrateToSource &&
+        Number.isFinite(requestedVideoBitrateKbps) &&
+        requestedVideoBitrateKbps > 0
+          ? await runFfprobeVideoBitrateKbps(workingInput).catch(() => null)
+          : null;
+      const sourceAudioBitrateKbps =
+        shouldCapBitrateToSource
+          ? await runFfprobeAudioBitrateKbps(workingInput).catch(() => null)
+          : null;
+      const effectiveVideoBitrate = shouldCapBitrateToSource
+        ? resolveEffectiveBitrateKbps(videoBitrate, sourceVideoBitrateKbps)
+        : videoBitrate;
+      const effectiveAudioBitrate = shouldCapBitrateToSource
+        ? (Number.isFinite(requestedAudioBitrateKbps) && requestedAudioBitrateKbps > 0
+            ? resolveEffectiveBitrateKbps(audioBitrate, sourceAudioBitrateKbps)
+            : (Number.isFinite(sourceAudioBitrateKbps) && sourceAudioBitrateKbps > 0
+                ? String(Math.round(sourceAudioBitrateKbps))
+                : audioBitrate))
+        : audioBitrate;
+      if (
+        shouldCapBitrateToSource &&
+        Number.isFinite(sourceVideoBitrateKbps) &&
+        requestedVideoBitrateKbps > sourceVideoBitrateKbps
+      ) {
+        broadcastTranscodeEvent(
+          "status",
+          `Capping bitrate for ${path.basename(file)} to source rate ${Math.round(sourceVideoBitrateKbps)}k (requested ${videoBitrate}k).`,
+        );
+      }
+      if (
+        shouldCapBitrateToSource &&
+        Number.isFinite(sourceAudioBitrateKbps) &&
+        requestedAudioBitrateKbps > sourceAudioBitrateKbps
+      ) {
+        broadcastTranscodeEvent(
+          "status",
+          `Capping audio bitrate for ${path.basename(file)} to source rate ${Math.round(sourceAudioBitrateKbps)}k (requested ${audioBitrate}k).`,
+        );
+      }
+      if (
+        shouldCapBitrateToSource &&
+        (!Number.isFinite(requestedAudioBitrateKbps) || requestedAudioBitrateKbps <= 0) &&
+        Number.isFinite(sourceAudioBitrateKbps) &&
+        sourceAudioBitrateKbps > 0
+      ) {
+        broadcastTranscodeEvent(
+          "status",
+          `Using source audio bitrate ${Math.round(sourceAudioBitrateKbps)}k for ${path.basename(file)} to avoid upscaling.`,
+        );
+      }
       const args = buildFfmpegArgs(workingInput, workingOutput, {
         videoCodec,
         audioCodec,
-        videoBitrate,
+        videoBitrate: effectiveVideoBitrate,
+        audioBitrate: effectiveAudioBitrate,
         audioChannels,
       });
       sourceDurationSeconds = await runFfprobeDuration(workingInput).catch(
@@ -914,6 +993,7 @@ const transcode = async (req, res) => {
       files,
       videoCodec,
       audioCodec,
+      audioBitrate,
       videoBitrate,
       audioChannels,
       deleteOriginal,
@@ -921,6 +1001,7 @@ const transcode = async (req, res) => {
       pauseBatteryPct,
       startBatteryPct,
       saveTranscodeLog,
+      capBitrateToSource: shouldCapBitrateToSource,
     },
     queuedDurations,
     fileDiagnostics,

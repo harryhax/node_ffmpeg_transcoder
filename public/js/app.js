@@ -176,6 +176,7 @@ function saveAuditSettings() {
     pauseBatteryPct: typeof existing.pauseBatteryPct === 'string' ? existing.pauseBatteryPct : '',
     startBatteryPct: typeof existing.startBatteryPct === 'string' ? existing.startBatteryPct : '',
     saveTranscodeLog: existing.saveTranscodeLog === true,
+    capBitrateToSource: existing.capBitrateToSource !== false,
     deleteOriginal: document.getElementById('delete-original')?.checked === true,
     transcodeSettingsExpanded: transcodeSettingsCollapse ? transcodeSettingsCollapse.classList.contains('show') : true
   };
@@ -1408,6 +1409,7 @@ transcodeBtn.addEventListener('click', async (event) => {
   const pauseBatteryPct = savedSettings.pauseBatteryPct || '';
   const startBatteryPct = savedSettings.startBatteryPct || '';
   const saveTranscodeLog = savedSettings.saveTranscodeLog === true;
+  const capBitrateToSource = savedSettings.capBitrateToSource !== false;
   saveAuditSettings();
 
   if (deleteOriginal) {
@@ -1436,7 +1438,8 @@ transcodeBtn.addEventListener('click', async (event) => {
         transcodeLocation,
         pauseBatteryPct,
         startBatteryPct,
-        saveTranscodeLog
+        saveTranscodeLog,
+        capBitrateToSource
       })
     });
     const data = await res.json();

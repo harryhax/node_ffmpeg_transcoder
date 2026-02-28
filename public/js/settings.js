@@ -17,6 +17,7 @@ const scanExtensionsSetting = document.getElementById('scan-extensions-setting')
 const pauseBatteryPctSetting = document.getElementById('pause-battery-pct-setting');
 const startBatteryPctSetting = document.getElementById('start-battery-pct-setting');
 const saveTranscodeLogSetting = document.getElementById('save-transcode-log-setting');
+const capBitrateToSourceSetting = document.getElementById('cap-bitrate-to-source-setting');
 const resetDefaultsBtn = document.getElementById('reset-defaults-btn');
 const advancedSettingStatus = document.getElementById('advanced-setting-status');
 let toolPathSaveTimeout = null;
@@ -298,6 +299,14 @@ if (showCommonCodecsCheckbox) {
     saveTranscodeLogSetting.checked = saved.saveTranscodeLog === true;
     saveTranscodeLogSetting.addEventListener('change', () => {
       saveAuditSettingsPatch({ saveTranscodeLog: saveTranscodeLogSetting.checked });
+      renderAdvancedSettingStatus();
+    });
+  }
+
+  if (capBitrateToSourceSetting) {
+    capBitrateToSourceSetting.checked = saved.capBitrateToSource !== false;
+    capBitrateToSourceSetting.addEventListener('change', () => {
+      saveAuditSettingsPatch({ capBitrateToSource: capBitrateToSourceSetting.checked });
       renderAdvancedSettingStatus();
     });
   }
