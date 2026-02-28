@@ -1,6 +1,6 @@
 import path from 'node:path';
-import { buildAuditInput, executeAudit } from '../services/auditService.js';
-import { collectVideoFiles } from '../services/auditCore.js';
+import { buildAuditInput, executeAudit } from '../../services/audit/auditService.js';
+import { collectVideoFiles } from '../../services/audit/auditCore.js';
 
 export async function runAuditHandler(req, res) {
   const input = buildAuditInput(req.body);

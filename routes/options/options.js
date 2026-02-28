@@ -6,7 +6,7 @@ import {
 	getToolPathsHandler,
 	setToolPathsHandler,
 	getToolHealthHandler
-} from '../controllers/optionsController.js';
+} from '../../controllers/options/optionsController.js';
 
 const router = express.Router();
 

@@ -1,6 +1,6 @@
 import path from 'path';
 import { spawn } from 'child_process';
-import { getFfprobeCommand } from './optionsService.js';
+import { getFfprobeCommand } from '../options/optionsService.js';
 
 function isWebmCompatible(videoCodec, audioCodec) {
   const normalizedVideo = (videoCodec || '').toLowerCase();

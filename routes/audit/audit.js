@@ -1,5 +1,5 @@
 import express from 'express';
-import { listAuditFilesHandler, runAuditFilesHandler, runAuditHandler } from '../controllers/auditController.js';
+import { listAuditFilesHandler, runAuditFilesHandler, runAuditHandler } from '../../controllers/audit/auditController.js';
 
 const router = express.Router();
 

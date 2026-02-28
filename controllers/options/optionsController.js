@@ -4,7 +4,7 @@ import {
   getToolPathOverrides,
   setToolPathOverrides,
   getToolHealth
-} from '../services/optionsService.js';
+} from '../../services/options/optionsService.js';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 

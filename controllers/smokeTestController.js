@@ -1,4 +1,4 @@
-import { getCodecOptions, getFfmpegCommand } from '../services/optionsService.js';
+import { getCodecOptions, getFfmpegCommand } from '../services/options/optionsService.js';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs/promises';

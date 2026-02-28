@@ -1,41 +1,39 @@
 import path from "path";
-import { spawn } from "child_process";
 import fs from "fs/promises";
-import { getFfmpegCommand } from "../services/optionsService.js";
+import { getFfmpegCommand } from "../../services/options/optionsService.js";
 import {
-  createBatteryPauseMonitor,
   normalizePauseBatteryPct,
   normalizeStartBatteryPct,
   readBatteryInfo,
-} from "../services/transcodeBattery.js";
-import { createTranscodeStreamState } from "../services/transcodeStreamState.js";
+} from "../../services/transcode/transcodeBattery.js";
+import { createTranscodeStreamState } from "../../services/transcode/transcodeStreamState.js";
 import {
   makeRunLogPath,
   writePerFileTranscodeLog,
   writeTranscodeRunLog,
-} from "../services/transcodeLogging.js";
+} from "../../services/transcode/transcodeLogging.js";
 import {
   runFfprobeAudioBitrateKbps,
   buildFailLogPathFromOutput,
   buildLogPathFromOutput,
   buildOutputPath,
-  extractProgressFromChunk,
   runFfprobeVideoBitrateKbps,
   runFfprobeDuration,
-} from "../services/transcodeUtils.js";
+} from "../../services/transcode/transcodeUtils.js";
 import {
   buildFfmpegArgs,
   resolveEffectiveBitrateKbps,
   resolveTranscodeLocation,
-} from "../services/transcodePolicy.js";
+} from "../../services/transcode/transcodePolicy.js";
 import {
   accumulateTranscodeSavings,
   attachSizeStats,
   getTranscodeSavingsSummary,
-} from "../services/transcodeResults.js";
-import { createTranscodeProcessState } from "../services/transcodeProcessState.js";
-import { buildOverallProgressSnapshot } from "../services/transcodeProgress.js";
-import { verifyTranscodeOutput } from "../services/transcodeVerification.js";
+} from "../../services/transcode/transcodeResults.js";
+import { createTranscodeProcessState } from "../../services/transcode/transcodeProcessState.js";
+import { buildOverallProgressSnapshot } from "../../services/transcode/transcodeProgress.js";
+import { verifyTranscodeOutput } from "../../services/transcode/transcodeVerification.js";
+import { runFfmpegTranscodeProcess } from "../../services/transcode/transcodeRunner.js";
 const transcodeStreamState = createTranscodeStreamState();
 const transcodeProcessState = createTranscodeProcessState();
 
@@ -361,110 +359,18 @@ const transcode = async (req, res) => {
         currentProcessedSeconds: 0,
         currentDurationSeconds: sourceDurationSeconds,
       });
-      await new Promise((resolve, reject) => {
-        const ff = spawn(getFfmpegCommand(), args);
-        transcodeProcessState.setProcess(ff);
-        const startedAtMs = Date.now();
-        let lastProgressEmitMs = 0;
-        const stopBatteryMonitor = createBatteryPauseMonitor({
-          ffmpegProcess: ff,
-          pauseBatteryThreshold,
-          isCurrentProcess: () => transcodeProcessState.isCurrentProcess(ff),
-          getPaused: () => transcodeProcessState.isPaused(),
-          setPaused: (paused) => transcodeProcessState.setPaused(paused),
-          onStatus: (message) => {
-            broadcastTranscodeEvent("status", message);
-          },
-        });
-        let stderr = "";
-        ff.stderr.on("data", (d) => {
-          const msg = d.toString();
-          stderr += msg;
-          ffmpegStderr += msg;
-          broadcastTranscodeEvent("log", msg);
-
-          const progress = extractProgressFromChunk(msg);
-          if (!progress || !Number.isFinite(progress.processedSeconds)) {
-            return;
-          }
-
-          const nowMs = Date.now();
-          if (nowMs - lastProgressEmitMs < 500) {
-            return;
-          }
-          lastProgressEmitMs = nowMs;
-
-          const processedSeconds = Math.max(0, progress.processedSeconds);
-          const elapsedSeconds = Math.max(0, (nowMs - startedAtMs) / 1000);
-          const totalDuration =
-            Number.isFinite(sourceDurationSeconds) && sourceDurationSeconds > 0
-              ? sourceDurationSeconds
-              : null;
-          const remainingSeconds = totalDuration
-            ? Math.max(0, totalDuration - processedSeconds)
-            : null;
-          let etaSeconds = null;
-
-          if (remainingSeconds !== null) {
-            if (Number.isFinite(progress.speed) && progress.speed > 0) {
-              etaSeconds = remainingSeconds / progress.speed;
-            } else if (processedSeconds > 0 && elapsedSeconds > 0) {
-              etaSeconds =
-                remainingSeconds * (elapsedSeconds / processedSeconds);
-            }
-          }
-
-          const percent = totalDuration
-            ? Math.max(
-                0,
-                Math.min(100, (processedSeconds / totalDuration) * 100),
-              )
-            : null;
-
-          broadcastTranscodeEvent(
-            "progress",
-            JSON.stringify({
-              file,
-              totalDurationSeconds: totalDuration,
-              processedSeconds,
-              percent,
-              etaSeconds,
-              elapsedSeconds,
-              speed: progress.speed,
-            }),
-          );
-          emitOverallProgress({
-            currentFileIndex: fileIndex,
-            currentProcessedSeconds: processedSeconds,
-            currentDurationSeconds: totalDuration,
-          });
-        });
-        ff.stdout &&
-          ff.stdout.on("data", (d) => {
-            const msg = d.toString();
-            ffmpegStdout += msg;
-            broadcastTranscodeEvent("log", msg);
-          });
-        ff.on("close", (code) => {
-          if (stopBatteryMonitor) {
-            stopBatteryMonitor();
-          }
-          transcodeProcessState.clearProcess();
-          if (code === 0) {
-            resolve();
-            return;
-          }
-
-          if (transcodeProcessState.isCancelRequested()) {
-            const cancelError = new Error("Transcode cancelled by user.");
-            cancelError.isCancelled = true;
-            reject(cancelError);
-            return;
-          }
-
-          reject(new Error(stderr || `ffmpeg exited with code ${code}`));
-        });
+      const runResult = await runFfmpegTranscodeProcess({
+        args,
+        file,
+        fileIndex,
+        sourceDurationSeconds,
+        pauseBatteryThreshold,
+        transcodeProcessState,
+        broadcastTranscodeEvent,
+        emitOverallProgress,
       });
+      ffmpegStdout = runResult.ffmpegStdout;
+      ffmpegStderr = runResult.ffmpegStderr;
       // If transcodeLocation, copy result back to original folder
       if (safeTranscodeLocation && tempOutput) {
         const origOutput = buildOutputPath(file, { videoCodec, audioCodec });

@@ -3,10 +3,10 @@ import { create } from 'express-handlebars';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import auditRoutes from './routes/audit.js';
-import optionsRoutes from './routes/options.js';
+import auditRoutes from './routes/audit/audit.js';
+import optionsRoutes from './routes/options/options.js';
 import smokeTestRoutes from './routes/smokeTest.js';
-import transcodeRoutes from './routes/transcode.js';
+import transcodeRoutes from './routes/transcode/transcode.js';
 import statsRoutes from './routes/stats.js';
 
 const app = express();

@@ -1,5 +1,5 @@
 import express from 'express';
-import transcodeController from '../controllers/transcodeController.js';
+import transcodeController from '../../controllers/transcode/transcodeController.js';
 
 const router = express.Router();
 router.get('/summary', transcodeController.transcodeSummary);

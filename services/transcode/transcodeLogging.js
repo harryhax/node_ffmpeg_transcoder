@@ -1,6 +1,6 @@
 import path from 'path';
 import fs from 'fs/promises';
-import { getFfprobeCommand } from './optionsService.js';
+import { getFfprobeCommand } from '../options/optionsService.js';
 import { runCommand } from './transcodeUtils.js';
 
 const transcodeRunLogDir = path.resolve(process.cwd(), 'transcode-logs');

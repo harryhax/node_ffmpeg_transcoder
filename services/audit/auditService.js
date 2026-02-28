@@ -2,7 +2,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { Worker } from 'node:worker_threads';
 import { inspectWithFallback, normalizeBitrateToBps } from './auditCore.js';
-import { getFfprobeCommand } from './optionsService.js';
+import { getFfprobeCommand } from '../options/optionsService.js';
 
 const VALID_OPERATORS = new Set(['>=', '<=', '=']);
 
@@ -12,7 +12,7 @@ function normalizeOperator(value, fallback = '=') {
 
 function runAuditInWorker(root, criteria) {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL('../workers/auditWorker.js', import.meta.url), {
+    const worker = new Worker(new URL('../../workers/auditWorker.js', import.meta.url), {
       workerData: { root, criteria }
     });
 
