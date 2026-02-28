@@ -33,16 +33,17 @@ import {
   attachSizeStats,
   getTranscodeSavingsSummary,
 } from "../services/transcodeResults.js";
+import { createTranscodeProcessState } from "../services/transcodeProcessState.js";
+import { buildOverallProgressSnapshot } from "../services/transcodeProgress.js";
+import { verifyTranscodeOutput } from "../services/transcodeVerification.js";
 const transcodeStreamState = createTranscodeStreamState();
-
-let transcodeInProgress = false;
-let transcodeCancelRequested = false;
-let lastFfmpegProcessPaused = false;
+const transcodeProcessState = createTranscodeProcessState();
 
 function getTranscodeLiveState() {
   return {
-    ...transcodeStreamState.getLiveState(transcodeInProgress),
-    paused: transcodeInProgress === true && lastFfmpegProcessPaused === true,
+    ...transcodeStreamState.getLiveState(transcodeProcessState.isInProgress()),
+    paused:
+      transcodeProcessState.isInProgress() && transcodeProcessState.isPaused(),
   };
 }
 
@@ -57,33 +58,6 @@ function broadcastTranscodeEvent(event, payload) {
 function emitTranscodeFileEvent(event, payload) {
   transcodeStreamState.emitFileEvent(event, payload);
 }
-
-async function verifyTranscodeOutput(inputPath, outputPath) {
-  const outputStat = await fs.stat(outputPath);
-  if (!outputStat.isFile() || outputStat.size <= 0) {
-    throw new Error("Output file missing or empty after transcode.");
-  }
-
-  const [inputDuration, outputDuration] = await Promise.all([
-    runFfprobeDuration(inputPath),
-    runFfprobeDuration(outputPath),
-  ]);
-
-  if (!Number.isFinite(inputDuration) || !Number.isFinite(outputDuration)) {
-    return;
-  }
-
-  const durationDiff = Math.abs(inputDuration - outputDuration);
-  const toleranceSeconds = Math.max(2, inputDuration * 0.05);
-  if (durationDiff > toleranceSeconds) {
-    throw new Error(
-      `Output duration differs too much from input (input=${inputDuration.toFixed(2)}s output=${outputDuration.toFixed(2)}s).`,
-    );
-  }
-}
-
-// Store last ffmpeg process for streaming
-let lastFfmpegProcess = null;
 
 const transcode = async (req, res) => {
   const {
@@ -138,8 +112,7 @@ const transcode = async (req, res) => {
     return res.status(400).json({ ok: false, error: error.message });
   }
 
-  transcodeInProgress = true;
-  transcodeCancelRequested = false;
+  transcodeProcessState.startRun();
   resetTranscodeLiveSnapshots();
   broadcastTranscodeEvent(
     "status",
@@ -197,106 +170,20 @@ const transcode = async (req, res) => {
     currentFileIndex = null,
     currentProcessedSeconds = 0,
     currentDurationSeconds = null,
-    currentSpeed = null,
-    currentElapsedSeconds = null,
   } = {}) => {
-    const knownDurations = queuedDurations.filter(
-      (duration) => Number.isFinite(duration) && duration > 0,
-    );
-    const fallbackAverage = knownDurations.length
-      ? knownDurations.reduce((sum, value) => sum + value, 0) /
-        knownDurations.length
-      : Number.isFinite(currentDurationSeconds) && currentDurationSeconds > 0
-        ? currentDurationSeconds
-        : null;
-
-    const estimatedDurations = queuedDurations.map((duration) => {
-      if (Number.isFinite(duration) && duration > 0) {
-        return duration;
-      }
-      return Number.isFinite(fallbackAverage) && fallbackAverage > 0
-        ? fallbackAverage
-        : 0;
+    const snapshot = buildOverallProgressSnapshot({
+      queuedDurations,
+      completedFiles,
+      totalFiles: files.length,
+      transcodeStartedAtMs,
+      currentFileIndex,
+      currentProcessedSeconds,
+      currentDurationSeconds,
     });
-
-    const totalEstimatedSeconds = estimatedDurations.reduce(
-      (sum, value) => sum + value,
-      0,
-    );
-    const completedEstimatedSeconds = estimatedDurations
-      .slice(0, completedFiles)
-      .reduce((sum, value) => sum + value, 0);
-
-    const processedContribution =
-      Number.isFinite(currentProcessedSeconds) && currentProcessedSeconds > 0
-        ? currentProcessedSeconds
-        : 0;
-    const doneEstimatedSeconds = Math.max(
-      0,
-      completedEstimatedSeconds + processedContribution,
-    );
-
-    const percent =
-      totalEstimatedSeconds > 0
-        ? Math.max(
-            0,
-            Math.min(100, (doneEstimatedSeconds / totalEstimatedSeconds) * 100),
-          )
-        : Math.max(
-            0,
-            Math.min(100, (completedFiles / Math.max(1, files.length)) * 100),
-          );
-
-    const remainingEstimatedSeconds =
-      totalEstimatedSeconds > 0
-        ? Math.max(0, totalEstimatedSeconds - doneEstimatedSeconds)
-        : null;
-
-    const runElapsedSeconds = Math.max(
-      0,
-      (Date.now() - transcodeStartedAtMs) / 1000,
-    );
-    const averageSpeed =
-      Number.isFinite(doneEstimatedSeconds) &&
-      doneEstimatedSeconds > 0 &&
-      runElapsedSeconds > 0
-        ? doneEstimatedSeconds / runElapsedSeconds
-        : null;
-
-    const etaSeconds =
-      Number.isFinite(remainingEstimatedSeconds) &&
-      Number.isFinite(averageSpeed) &&
-      averageSpeed > 0
-        ? remainingEstimatedSeconds / averageSpeed
-        : null;
-
-    const knownCount = knownDurations.length;
-    const estimateCoverage = files.length > 0 ? knownCount / files.length : 1;
-    const estimateConfidence =
-      estimateCoverage >= 0.85
-        ? "high"
-        : estimateCoverage >= 0.45
-          ? "medium"
-          : "low";
 
     broadcastTranscodeEvent(
       "overall",
-      JSON.stringify({
-        percent,
-        etaSeconds,
-        completedFiles,
-        totalFiles: files.length,
-        currentFileIndex,
-        remainingFiles: Math.max(0, files.length - completedFiles),
-        totalEstimatedSeconds:
-          Number.isFinite(totalEstimatedSeconds) && totalEstimatedSeconds > 0
-            ? totalEstimatedSeconds
-            : null,
-        doneEstimatedSeconds,
-        averageSpeed: Number.isFinite(averageSpeed) ? averageSpeed : null,
-        estimateConfidence,
-        estimateCoverage,
-      }),
+      JSON.stringify(snapshot),
     );
   };
 
@@ -317,7 +204,7 @@ const transcode = async (req, res) => {
     let perFileLogPath = null;
     let sourceDurationSeconds = null;
     try {
-      if (transcodeCancelRequested) {
+      if (transcodeProcessState.isCancelRequested()) {
         broadcastTranscodeEvent(
           "status",
           "Cancellation requested. Stopping remaining transcode queue.",
@@ -473,24 +360,18 @@ const transcode = async (req, res) => {
         currentFileIndex: fileIndex,
         currentProcessedSeconds: 0,
         currentDurationSeconds: sourceDurationSeconds,
-        currentSpeed: null,
-        currentElapsedSeconds: 0,
       });
       await new Promise((resolve, reject) => {
         const ff = spawn(getFfmpegCommand(), args);
-        lastFfmpegProcess = ff;
-        lastFfmpegProcessPaused = false;
+        transcodeProcessState.setProcess(ff);
         const startedAtMs = Date.now();
         let lastProgressEmitMs = 0;
         const stopBatteryMonitor = createBatteryPauseMonitor({
           ffmpegProcess: ff,
           pauseBatteryThreshold,
-          isCurrentProcess: () =>
-            !!lastFfmpegProcess && lastFfmpegProcess === ff,
-          getPaused: () => lastFfmpegProcessPaused,
-          setPaused: (paused) => {
-            lastFfmpegProcessPaused = paused;
-          },
+          isCurrentProcess: () => transcodeProcessState.isCurrentProcess(ff),
+          getPaused: () => transcodeProcessState.isPaused(),
+          setPaused: (paused) => transcodeProcessState.setPaused(paused),
           onStatus: (message) => {
             broadcastTranscodeEvent("status", message);
           },
@@ -556,8 +437,6 @@ const transcode = async (req, res) => {
             currentFileIndex: fileIndex,
             currentProcessedSeconds: processedSeconds,
             currentDurationSeconds: totalDuration,
-            currentSpeed: progress.speed,
-            currentElapsedSeconds: elapsedSeconds,
           });
         });
         ff.stdout &&
@@ -570,14 +449,13 @@ const transcode = async (req, res) => {
           if (stopBatteryMonitor) {
             stopBatteryMonitor();
           }
-          lastFfmpegProcess = null;
-          lastFfmpegProcessPaused = false;
+          transcodeProcessState.clearProcess();
           if (code === 0) {
             resolve();
             return;
           }
 
-          if (transcodeCancelRequested) {
+          if (transcodeProcessState.isCancelRequested()) {
             const cancelError = new Error("Transcode cancelled by user.");
             cancelError.isCancelled = true;
             reject(cancelError);
@@ -723,7 +601,7 @@ const transcode = async (req, res) => {
         perFileLogPath,
       });
     } catch (err) {
-      if (err?.isCancelled || transcodeCancelRequested) {
+      if (err?.isCancelled || transcodeProcessState.isCancelRequested()) {
         const cancelMessage = "Transcode cancelled by user.";
         results.push({
           file,
@@ -837,8 +715,6 @@ const transcode = async (req, res) => {
     currentFileIndex: null,
     currentProcessedSeconds: 0,
     currentDurationSeconds: null,
-    currentSpeed: null,
-    currentElapsedSeconds: null,
   });
 
   const enrichedResults = await attachSizeStats(results);
@@ -874,8 +750,7 @@ const transcode = async (req, res) => {
     );
   });
 
-  transcodeInProgress = false;
-  transcodeCancelRequested = false;
+  transcodeProcessState.finishRun();
   transcodeStreamState.clearProgressSnapshots();
 
   if (fileAttempts.some((attempt) => attempt.status === "cancelled")) {
@@ -947,11 +822,11 @@ const transcodeStream = (req, res) => {
   transcodeStreamState.writeSseEvent(
     res,
     "status",
-    transcodeInProgress
+    transcodeProcessState.isInProgress()
       ? "Transcode in progress."
       : "Connected. Waiting for transcode.",
   );
-  if (transcodeInProgress) {
+  if (transcodeProcessState.isInProgress()) {
     transcodeStreamState.replayProgressSnapshots(res);
   }
   req.on("close", () => {
@@ -961,26 +836,19 @@ const transcodeStream = (req, res) => {
 
 // Cancel endpoint: kill ffmpeg process
 export const transcodeCancel = (req, res) => {
-  if (!transcodeInProgress) {
+  if (!transcodeProcessState.isInProgress()) {
     return res
       .status(400)
       .json({ ok: false, error: "No transcode in progress." });
   }
 
-  transcodeCancelRequested = true;
+  transcodeProcessState.requestCancel();
   broadcastTranscodeEvent(
     "status",
     "Cancellation requested. Current and queued transcodes will stop.",
   );
 
-  if (lastFfmpegProcess && lastFfmpegProcess.kill) {
-    if (lastFfmpegProcessPaused) {
-      try {
-        lastFfmpegProcess.kill("SIGCONT");
-      } catch {}
-    }
-    lastFfmpegProcess.kill("SIGTERM");
-    lastFfmpegProcessPaused = false;
+  if (transcodeProcessState.terminateCurrentProcess()) {
     console.log("Transcode cancelled by user.");
     return res.json({ ok: true, message: "Transcode cancellation requested." });
   }
@@ -988,13 +856,16 @@ export const transcodeCancel = (req, res) => {
 };
 
 export const transcodePause = (_req, res) => {
-  if (!transcodeInProgress || !lastFfmpegProcess || !lastFfmpegProcess.kill) {
+  if (
+    !transcodeProcessState.isInProgress() ||
+    !transcodeProcessState.hasControllableProcess()
+  ) {
     return res
       .status(400)
       .json({ ok: false, error: "No transcode in progress." });
   }
 
-  if (lastFfmpegProcessPaused) {
+  if (transcodeProcessState.isPaused()) {
     return res.json({
       ok: true,
       paused: true,
@@ -1003,8 +874,7 @@ export const transcodePause = (_req, res) => {
   }
 
   try {
-    lastFfmpegProcess.kill("SIGSTOP");
-    lastFfmpegProcessPaused = true;
+    transcodeProcessState.pauseCurrentProcess();
     broadcastTranscodeEvent("status", "Paused: manually paused by user.");
     return res.json({ ok: true, paused: true, message: "Transcode paused." });
   } catch (error) {
@@ -1016,13 +886,16 @@ export const transcodePause = (_req, res) => {
 };
 
 export const transcodeResume = (_req, res) => {
-  if (!transcodeInProgress || !lastFfmpegProcess || !lastFfmpegProcess.kill) {
+  if (
+    !transcodeProcessState.isInProgress() ||
+    !transcodeProcessState.hasControllableProcess()
+  ) {
     return res
       .status(400)
       .json({ ok: false, error: "No transcode in progress." });
   }
 
-  if (!lastFfmpegProcessPaused) {
+  if (!transcodeProcessState.isPaused()) {
     return res.json({
       ok: true,
       paused: false,
@@ -1031,8 +904,7 @@ export const transcodeResume = (_req, res) => {
   }
 
   try {
-    lastFfmpegProcess.kill("SIGCONT");
-    lastFfmpegProcessPaused = false;
+    transcodeProcessState.resumeCurrentProcess();
     broadcastTranscodeEvent("status", "Resumed: manually resumed by user.");
     return res.json({ ok: true, paused: false, message: "Transcode resumed." });
   } catch (error) {
