@@ -1,3 +1,12 @@
+import { fetchJson, fetchJsonOrThrow } from './api.js';
+import {
+  readJsonStorage,
+  readStringStorage,
+  removeStorageKeys,
+  writeJsonStorage,
+  writeStringStorage,
+} from './storage.js';
+
 const CODEC_VISIBILITY_KEY = 'codecVisibilityMode';
 const AUDIT_SETTINGS_KEY = 'auditFormSettings';
 const SMOKE_SETTINGS_KEY = 'smokeGeneratorSettings';
@@ -33,11 +42,7 @@ async function loadDirectoryPicker(valueInput, picker, {
   const currentValue = String(valueInput.value || '').trim();
   const base = currentValue || '.';
   const query = new URLSearchParams({ base, maxDepth: String(maxDepth) });
-  const response = await fetch(`/api/options/directories?${query.toString()}`);
-  const data = await response.json();
-  if (!response.ok || !data?.ok) {
-    throw new Error(data?.error || 'Unable to load directories.');
-  }
+  const data = await fetchJsonOrThrow(`/api/options/directories?${query.toString()}`, undefined, 'Unable to load directories.');
 
   const options = [];
 
@@ -74,20 +79,14 @@ function normalizeScanExtensionsInput(value) {
 }
 
 function loadAuditSettings() {
-  try {
-    const raw = globalThis.localStorage?.getItem(AUDIT_SETTINGS_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
+  const parsed = readJsonStorage(AUDIT_SETTINGS_KEY, {});
+  return parsed && typeof parsed === 'object' ? parsed : {};
 }
 
 function saveAuditSettingsPatch(patch) {
   const current = loadAuditSettings();
   const merged = { ...current, ...patch };
-  globalThis.localStorage?.setItem(AUDIT_SETTINGS_KEY, JSON.stringify(merged));
+  writeJsonStorage(AUDIT_SETTINGS_KEY, merged);
 }
 
 function renderAdvancedSettingStatus(text = 'Saved. These defaults are used by the audit/transcode page.') {
@@ -98,11 +97,7 @@ function renderAdvancedSettingStatus(text = 'Saved. These defaults are used by t
 }
 
 async function loadToolPathsFromServer() {
-  const response = await fetch('/api/options/tool-paths');
-  const data = await response.json();
-  if (!response.ok || !data?.ok) {
-    throw new Error(data?.error || 'Unable to load ffmpeg/ffprobe folder settings.');
-  }
+  const data = await fetchJsonOrThrow('/api/options/tool-paths', undefined, 'Unable to load ffmpeg/ffprobe folder settings.');
   return data.toolPaths || {};
 }
 
@@ -110,35 +105,29 @@ async function saveToolPathsToServer() {
   const ffmpegDir = ffmpegDirSetting ? ffmpegDirSetting.value.trim() : '';
   const ffprobeDir = ffprobeDirSetting ? ffprobeDirSetting.value.trim() : '';
 
-  const response = await fetch('/api/options/tool-paths', {
+  const data = await fetchJsonOrThrow('/api/options/tool-paths', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ffmpegDir, ffprobeDir })
-  });
-  const data = await response.json();
-  if (!response.ok || !data?.ok) {
-    throw new Error(data?.error || 'Unable to save ffmpeg/ffprobe folder settings.');
-  }
+  }, 'Unable to save ffmpeg/ffprobe folder settings.');
   return data.toolPaths || {};
 }
 
 async function resetToolPathsToDefaults() {
-  const response = await fetch('/api/options/tool-paths', {
+  await fetchJsonOrThrow('/api/options/tool-paths', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ ffmpegDir: '', ffprobeDir: '' })
-  });
-  const data = await response.json();
-  if (!response.ok || !data?.ok) {
-    throw new Error(data?.error || 'Unable to reset ffmpeg/ffprobe folder settings.');
-  }
+  }, 'Unable to reset ffmpeg/ffprobe folder settings.');
 }
 
 function clearAppLocalSettings() {
-  globalThis.localStorage?.removeItem(CODEC_VISIBILITY_KEY);
-  globalThis.localStorage?.removeItem(AUDIT_SETTINGS_KEY);
-  globalThis.localStorage?.removeItem(SMOKE_SETTINGS_KEY);
-  globalThis.localStorage?.removeItem(LAST_SCAN_RESULTS_KEY);
+  removeStorageKeys([
+    CODEC_VISIBILITY_KEY,
+    AUDIT_SETTINGS_KEY,
+    SMOKE_SETTINGS_KEY,
+    LAST_SCAN_RESULTS_KEY,
+  ]);
 }
 
 function scheduleToolPathSave() {
@@ -180,11 +169,11 @@ if (resetDefaultsBtn) {
 }
 
 function getCodecVisibilityMode() {
-  return globalThis.localStorage?.getItem(CODEC_VISIBILITY_KEY) || 'all';
+  return readStringStorage(CODEC_VISIBILITY_KEY, 'all') || 'all';
 }
 
 function setCodecVisibilityMode(mode) {
-  globalThis.localStorage?.setItem(CODEC_VISIBILITY_KEY, mode);
+  writeStringStorage(CODEC_VISIBILITY_KEY, mode);
 }
 
 function renderCodecSettingStatus(isCommonOnly) {
@@ -651,11 +640,7 @@ async function refreshSmokeGpuCodecStatus() {
 
   smokeGpuCodecsStatus.textContent = 'Checking available GPU codecs...';
   try {
-    const response = await fetch('/api/options/codecs');
-    const data = await response.json();
-    if (!response.ok || !data?.ok) {
-      throw new Error(data?.error || 'Unable to fetch codecs.');
-    }
+    const data = await fetchJsonOrThrow('/api/options/codecs', undefined, 'Unable to fetch codecs.');
 
     const videoCodecs = Array.isArray(data.videoCodecs) ? data.videoCodecs : [];
     availableSmokeVideoCodecs = videoCodecs;
@@ -752,20 +737,14 @@ function stopSmokeOutputWindow() {
 }
 
 function loadSmokeSettings() {
-  try {
-    const raw = globalThis.localStorage?.getItem(SMOKE_SETTINGS_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
+  const parsed = readJsonStorage(SMOKE_SETTINGS_KEY, {});
+  return parsed && typeof parsed === 'object' ? parsed : {};
 }
 
 function saveSmokeSettingsPatch(patch) {
   const current = loadSmokeSettings();
   const merged = { ...current, ...patch };
-  globalThis.localStorage?.setItem(SMOKE_SETTINGS_KEY, JSON.stringify(merged));
+  writeJsonStorage(SMOKE_SETTINGS_KEY, merged);
 }
 
 function normalizeSmokeDurationRange(minRaw, maxRaw) {
@@ -905,7 +884,7 @@ if (smokeForm && smokeBtn && smokeStatus) {
     appendSmokeOutput(`Requested ${smokeCount} file(s), mode=${smokeMode}, length range=${durationRange.min}-${durationRange.max} sec, bitrate range=${bitrateRange.min}-${bitrateRange.max}k, gpuOnly=${useGpuCodecsOnly ? 'yes' : 'no'}, selectedCodecs=${selectedVideoCodecs.length ? selectedVideoCodecs.join(', ') : 'all'}.`);
 
     try {
-      const response = await fetch('/api/smoke', {
+      const { response, data } = await fetchJson('/api/smoke', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -920,7 +899,6 @@ if (smokeForm && smokeBtn && smokeStatus) {
         })
       });
 
-      const data = await response.json();
       if (!response.ok || !data.ok) {
         throw new Error(data.error || 'Smoke test generation failed.');
       }
@@ -942,8 +920,7 @@ if (smokeCancelBtn) {
     smokeCancelBtn.disabled = true;
     appendSmokeOutput('Cancelling smoke generation...');
     try {
-      const response = await fetch('/api/smoke/cancel', { method: 'POST' });
-      const data = await response.json();
+      const { response, data } = await fetchJson('/api/smoke/cancel', { method: 'POST' });
       if (!response.ok || !data.ok) {
         throw new Error(data.error || 'Cancel failed.');
       }

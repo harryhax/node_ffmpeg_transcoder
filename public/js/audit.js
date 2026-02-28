@@ -1,47 +1,31 @@
 import { setSelectOptions, renderResults } from './ui.js';
+import { fetchJson, fetchJsonOrThrow } from './api.js';
+import { readJsonStorage } from './storage.js';
 
 const AUDIT_SETTINGS_KEY = 'auditFormSettings';
 const DEFAULT_SCAN_EXTENSIONS = '.mp4,.mkv,.mov,.avi,.wmv,.flv,.webm,.m4v,.mpg,.mpeg,.ts';
 let activeAuditAbortController = null;
 
 function readSavedBitrateTolerancePct() {
-  try {
-    const raw = globalThis.localStorage?.getItem(AUDIT_SETTINGS_KEY);
-    if (!raw) {
-      return '10';
-    }
-    const parsed = JSON.parse(raw);
-    const value = parsed?.videoBitrateTolerancePct;
-    if (typeof value !== 'string') {
-      return '10';
-    }
-    return value;
-  } catch {
+  const parsed = readJsonStorage(AUDIT_SETTINGS_KEY, null);
+  const value = parsed?.videoBitrateTolerancePct;
+  if (typeof value !== 'string') {
     return '10';
   }
+  return value;
 }
 
 function readSavedScanExtensions() {
-  try {
-    const raw = globalThis.localStorage?.getItem(AUDIT_SETTINGS_KEY);
-    if (!raw) {
-      return DEFAULT_SCAN_EXTENSIONS;
-    }
-    const parsed = JSON.parse(raw);
-    if (typeof parsed?.scanExtensions !== 'string') {
-      return DEFAULT_SCAN_EXTENSIONS;
-    }
-    const value = parsed.scanExtensions.trim();
-    return value || DEFAULT_SCAN_EXTENSIONS;
-  } catch {
+  const parsed = readJsonStorage(AUDIT_SETTINGS_KEY, null);
+  if (typeof parsed?.scanExtensions !== 'string') {
     return DEFAULT_SCAN_EXTENSIONS;
   }
+  const value = parsed.scanExtensions.trim();
+  return value || DEFAULT_SCAN_EXTENSIONS;
 }
 
 export async function loadCodecs(videoCodecSelect, audioCodecSelect) {
-  const response = await fetch('/api/options/codecs');
-  const data = await response.json();
-  if (!response.ok || !data.ok) throw new Error(data.error || 'Unable to load codec options.');
+  const data = await fetchJsonOrThrow('/api/options/codecs', undefined, 'Unable to load codec options.');
   setSelectOptions(videoCodecSelect, data.videoCodecs, 'hevc_videotoolbox');
   setSelectOptions(audioCodecSelect, data.audioCodecs, 'aac');
 }
@@ -50,9 +34,7 @@ export async function loadDirectories(rootInput, rootPicker) {
   const base = rootInput.value || '.';
   const currentRoot = String(rootInput.value || '').trim() || String(base).trim();
   const query = new URLSearchParams({ base, maxDepth: '1' });
-  const response = await fetch(`/api/options/directories?${query.toString()}`);
-  const data = await response.json();
-  if (!response.ok || !data.ok) throw new Error(data.error || 'Unable to load directories.');
+  const data = await fetchJsonOrThrow(`/api/options/directories?${query.toString()}`, undefined, 'Unable to load directories.');
   const options = [];
 
   if (typeof data.parent === 'string' && data.parent) {
@@ -130,10 +112,9 @@ export async function runAudit(form, runButton, cancelScanButton, resultsBody, r
     if (scanExtensions) {
       listQuery.set('scanExtensions', scanExtensions);
     }
-    const listResponse = await fetch(`/api/audit/files?${listQuery.toString()}`, {
+    const { response: listResponse, data: listData } = await fetchJson(`/api/audit/files?${listQuery.toString()}`, {
       signal: abortController.signal
     });
-    const listData = await listResponse.json();
     if (!listResponse.ok || !listData.ok) {
       throw new Error(listData.error || 'Unable to list files for scan.');
     }
@@ -151,13 +132,12 @@ export async function runAudit(form, runButton, cancelScanButton, resultsBody, r
 
     for (let idx = 0; idx < files.length; idx += 1) {
       const filePath = files[idx];
-      const response = await fetch('/api/audit/files', {
+      const { response, data } = await fetchJson('/api/audit/files', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...payload, files: [filePath] }),
         signal: abortController.signal
       });
-      const data = await response.json();
       if (!response.ok || !data.ok) {
         throw new Error(data.error || `Scan failed for ${filePath}.`);
       }

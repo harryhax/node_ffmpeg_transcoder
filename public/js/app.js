@@ -1,6 +1,8 @@
 import { createLogViewerHref } from './utils.js';
 import { renderResults, setSelectOptions, getRowState, getStatusLabel } from './ui.js';
 import { loadCodecs, loadDirectories, runAudit } from './audit.js';
+import { fetchJson, fetchJsonOrThrow } from './api.js';
+import { readJsonStorage, readStringStorage, writeJsonStorage, writeStringStorage } from './storage.js';
 
 const CODEC_VISIBILITY_KEY = 'codecVisibilityMode';
 const AUDIT_SETTINGS_KEY = 'auditFormSettings';
@@ -10,7 +12,7 @@ const COMMON_VIDEO_CODECS = ['hevc_videotoolbox', 'hevc', 'h264_videotoolbox', '
 const COMMON_AUDIO_CODECS = ['ac3', 'aac', 'eac3', 'libopus', 'opus', 'mp3', 'flac', 'dts', 'pcm_s16le', 'vorbis'];
 
 function showCommonCodecsOnly() {
-  return globalThis.localStorage?.getItem(CODEC_VISIBILITY_KEY) === 'common';
+  return readStringStorage(CODEC_VISIBILITY_KEY, '') === 'common';
 }
 
 function selectTopCodecs(allCodecs, preferredOrder, limit = 10) {
@@ -39,70 +41,56 @@ function selectTopCodecs(allCodecs, preferredOrder, limit = 10) {
 }
 
 function loadSavedAuditSettings() {
-  try {
-    const raw = globalThis.localStorage?.getItem(AUDIT_SETTINGS_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
-  } catch {
-    return {};
-  }
+  const parsed = readJsonStorage(AUDIT_SETTINGS_KEY, {});
+  return parsed && typeof parsed === 'object' ? parsed : {};
 }
 
 function loadCachedScanResults() {
-  try {
-    const raw = globalThis.localStorage?.getItem(LAST_SCAN_RESULTS_KEY);
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== 'object') {
-      return null;
-    }
-
-    // Backward-compatible shape: { root, rows, summary }
-    if (typeof parsed.root === 'string' && Array.isArray(parsed.rows)) {
-      return {
-        version: 1,
-        byRoot: {
-          [parsed.root]: {
-            rows: parsed.rows,
-            summary: parsed.summary && typeof parsed.summary === 'object' ? parsed.summary : {},
-            savedAt: Number.isFinite(parsed.savedAt) ? parsed.savedAt : Date.now()
-          }
-        },
-        lastRoot: parsed.root
-      };
-    }
-
-    // New shape: { version, byRoot: { [root]: { rows, summary, savedAt } }, lastRoot }
-    if (!parsed.byRoot || typeof parsed.byRoot !== 'object') {
-      return null;
-    }
-
-    const byRoot = {};
-    for (const [root, entry] of Object.entries(parsed.byRoot)) {
-      if (typeof root !== 'string' || !entry || typeof entry !== 'object') {
-        continue;
-      }
-      if (!Array.isArray(entry.rows)) {
-        continue;
-      }
-      byRoot[root] = {
-        rows: entry.rows,
-        summary: entry.summary && typeof entry.summary === 'object' ? entry.summary : {},
-        savedAt: Number.isFinite(entry.savedAt) ? entry.savedAt : Date.now()
-      };
-    }
-
-    return {
-      version: 1,
-      byRoot,
-      lastRoot: typeof parsed.lastRoot === 'string' ? parsed.lastRoot : ''
-    };
-  } catch {
+  const parsed = readJsonStorage(LAST_SCAN_RESULTS_KEY, null);
+  if (!parsed || typeof parsed !== 'object') {
     return null;
   }
+
+  // Backward-compatible shape: { root, rows, summary }
+  if (typeof parsed.root === 'string' && Array.isArray(parsed.rows)) {
+    return {
+      version: 1,
+      byRoot: {
+        [parsed.root]: {
+          rows: parsed.rows,
+          summary: parsed.summary && typeof parsed.summary === 'object' ? parsed.summary : {},
+          savedAt: Number.isFinite(parsed.savedAt) ? parsed.savedAt : Date.now()
+        }
+      },
+      lastRoot: parsed.root
+    };
+  }
+
+  // New shape: { version, byRoot: { [root]: { rows, summary, savedAt } }, lastRoot }
+  if (!parsed.byRoot || typeof parsed.byRoot !== 'object') {
+    return null;
+  }
+
+  const byRoot = {};
+  for (const [root, entry] of Object.entries(parsed.byRoot)) {
+    if (typeof root !== 'string' || !entry || typeof entry !== 'object') {
+      continue;
+    }
+    if (!Array.isArray(entry.rows)) {
+      continue;
+    }
+    byRoot[root] = {
+      rows: entry.rows,
+      summary: entry.summary && typeof entry.summary === 'object' ? entry.summary : {},
+      savedAt: Number.isFinite(entry.savedAt) ? entry.savedAt : Date.now()
+    };
+  }
+
+  return {
+    version: 1,
+    byRoot,
+    lastRoot: typeof parsed.lastRoot === 'string' ? parsed.lastRoot : ''
+  };
 }
 
 function saveCachedScanResults(rows, summary = {}) {
@@ -129,10 +117,7 @@ function saveCachedScanResults(rows, summary = {}) {
     lastRoot: root
   };
 
-  try {
-    globalThis.localStorage?.setItem(LAST_SCAN_RESULTS_KEY, JSON.stringify(payload));
-  } catch {
-  }
+  writeJsonStorage(LAST_SCAN_RESULTS_KEY, payload);
 }
 
 function restoreCachedScanResultsForCurrentRoot() {
@@ -180,7 +165,7 @@ function saveAuditSettings() {
     deleteOriginal: document.getElementById('delete-original')?.checked === true,
     transcodeSettingsExpanded: transcodeSettingsCollapse ? transcodeSettingsCollapse.classList.contains('show') : true
   };
-  globalThis.localStorage?.setItem(AUDIT_SETTINGS_KEY, JSON.stringify(payload));
+  writeJsonStorage(AUDIT_SETTINGS_KEY, payload);
 }
 
 function applySavedAuditSettings(settings) {
@@ -307,22 +292,15 @@ const TRANSODE_OUTPUT_EXPANDED_HEIGHT_PX = 240;
 const TRANSODE_OUTPUT_COLLAPSED_HEIGHT_PX = 56;
 
 function readOutputCollapsedPreference() {
-  try {
-    const raw = globalThis.localStorage?.getItem(OUTPUT_COLLAPSED_KEY);
-    if (raw === null) {
-      return true;
-    }
-    return raw === 'true';
-  } catch {
+  const raw = readStringStorage(OUTPUT_COLLAPSED_KEY, '__missing__');
+  if (raw === '__missing__') {
     return true;
   }
+  return raw === 'true';
 }
 
 function saveOutputCollapsedPreference(isCollapsed) {
-  try {
-    globalThis.localStorage?.setItem(OUTPUT_COLLAPSED_KEY, isCollapsed ? 'true' : 'false');
-  } catch {
-  }
+  writeStringStorage(OUTPUT_COLLAPSED_KEY, isCollapsed ? 'true' : 'false');
 }
 
 function escapeConsoleHtml(value) {
@@ -577,11 +555,7 @@ async function refreshToolHealthWarning() {
   };
 
   try {
-    const response = await fetch('/api/options/tool-health');
-    const data = await response.json();
-    if (!response.ok || !data?.ok) {
-      throw new Error(data?.error || 'Unable to check ffmpeg/ffprobe health.');
-    }
+    const data = await fetchJsonOrThrow('/api/options/tool-health', undefined, 'Unable to check ffmpeg/ffprobe health.');
 
     const health = data.health || {};
     const ffmpegOk = health?.ffmpeg?.ok === true;
@@ -679,11 +653,7 @@ async function refreshAppSavingsSummary() {
   }
 
   try {
-    const response = await fetch('/api/transcode/summary');
-    const data = await response.json();
-    if (!response.ok || !data?.ok) {
-      throw new Error(data?.error || 'Unable to load transcode summary.');
-    }
+    const data = await fetchJsonOrThrow('/api/transcode/summary', undefined, 'Unable to load transcode summary.');
     renderAppSavingsSummary(data.summary || {});
   } catch {
   }
@@ -742,7 +712,7 @@ async function refreshRowsAfterTranscode(transcodeResults) {
 
   const formData = new FormData(form);
   const saved = loadSavedAuditSettings();
-  const response = await fetch('/api/audit/files', {
+  const { response, data: payload } = await fetchJson('/api/audit/files', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -758,7 +728,6 @@ async function refreshRowsAfterTranscode(transcodeResults) {
     })
   });
 
-  const payload = await response.json();
   if (!response.ok || !payload?.ok) {
     throw new Error(payload?.error || 'Failed to refresh changed rows.');
   }
@@ -1114,11 +1083,7 @@ function startTranscodeEventStream() {
 
 async function recoverTranscodeSessionIfRunning() {
   try {
-    const response = await fetch('/api/transcode/state');
-    const data = await response.json();
-    if (!response.ok || !data?.ok) {
-      return;
-    }
+    const data = await fetchJsonOrThrow('/api/transcode/state', undefined, 'Unable to fetch transcode state.');
 
     const state = data.state || {};
     if (state.inProgress !== true) {
@@ -1152,8 +1117,7 @@ if (inlineCancelBtn) {
     inlineCancelBtn.disabled = true;
     writeUiMessage('info', 'Cancelling transcode...');
     try {
-      const res = await fetch('/api/transcode/cancel', { method: 'POST' });
-      const data = await res.json();
+      const { response: res, data } = await fetchJson('/api/transcode/cancel', { method: 'POST' });
       if (!res.ok || !data.ok) throw new Error(data.error || 'Cancel failed.');
       writeUiMessage('success', data.message || 'Transcode cancelled.');
     } catch (err) {
@@ -1171,8 +1135,7 @@ if (inlinePauseBtn) {
     const endpoint = currentlyPaused ? '/api/transcode/resume' : '/api/transcode/pause';
     writeUiMessage('info', currentlyPaused ? 'Resuming transcode...' : 'Pausing transcode...');
     try {
-      const res = await fetch(endpoint, { method: 'POST' });
-      const data = await res.json();
+      const { response: res, data } = await fetchJson(endpoint, { method: 'POST' });
       if (!res.ok || !data.ok) throw new Error(data.error || 'Pause/resume failed.');
       setInlinePauseButtonState(data.paused === true);
       writeUiMessage('success', data.message || (data.paused ? 'Transcode paused.' : 'Transcode resumed.'));
@@ -1187,9 +1150,7 @@ if (inlinePauseBtn) {
 // Helper to sync codec dropdowns
 async function syncCodecDropdowns() {
   const savedSettings = loadSavedAuditSettings();
-  const response = await fetch('/api/options/codecs');
-  const data = await response.json();
-  if (!response.ok || !data.ok) throw new Error(data.error || 'Unable to load codec options.');
+  const data = await fetchJsonOrThrow('/api/options/codecs', undefined, 'Unable to load codec options.');
   const filteredVideoCodecs = showCommonCodecsOnly()
     ? selectTopCodecs(data.videoCodecs, COMMON_VIDEO_CODECS, 10)
     : data.videoCodecs;
@@ -1480,7 +1441,7 @@ transcodeBtn.addEventListener('click', async (event) => {
   showTranscodeOutput();
   startTranscodeEventStream();
   try {
-    const res = await fetch('/api/transcode', {
+    const { response: res, data } = await fetchJson('/api/transcode', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1497,7 +1458,6 @@ transcodeBtn.addEventListener('click', async (event) => {
         capBitrateToSource
       })
     });
-    const data = await res.json();
     if (Array.isArray(data.results)) {
       updateTranscodeSavingsSummary(data.results);
     }
