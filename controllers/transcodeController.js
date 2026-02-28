@@ -112,7 +112,10 @@ function resolveEffectiveBitrateKbps(requestedBitrate, sourceBitrateKbps) {
 }
 
 function getTranscodeLiveState() {
-  return transcodeStreamState.getLiveState(transcodeInProgress);
+  return {
+    ...transcodeStreamState.getLiveState(transcodeInProgress),
+    paused: transcodeInProgress === true && lastFfmpegProcessPaused === true,
+  };
 }
 
 function resetTranscodeLiveSnapshots() {
@@ -533,19 +536,20 @@ const transcode = async (req, res) => {
         requestedVideoBitrateKbps > 0
           ? await runFfprobeVideoBitrateKbps(workingInput).catch(() => null)
           : null;
-      const sourceAudioBitrateKbps =
-        shouldCapBitrateToSource
-          ? await runFfprobeAudioBitrateKbps(workingInput).catch(() => null)
-          : null;
+      const sourceAudioBitrateKbps = shouldCapBitrateToSource
+        ? await runFfprobeAudioBitrateKbps(workingInput).catch(() => null)
+        : null;
       const effectiveVideoBitrate = shouldCapBitrateToSource
         ? resolveEffectiveBitrateKbps(videoBitrate, sourceVideoBitrateKbps)
         : videoBitrate;
       const effectiveAudioBitrate = shouldCapBitrateToSource
-        ? (Number.isFinite(requestedAudioBitrateKbps) && requestedAudioBitrateKbps > 0
-            ? resolveEffectiveBitrateKbps(audioBitrate, sourceAudioBitrateKbps)
-            : (Number.isFinite(sourceAudioBitrateKbps) && sourceAudioBitrateKbps > 0
-                ? String(Math.round(sourceAudioBitrateKbps))
-                : audioBitrate))
+        ? Number.isFinite(requestedAudioBitrateKbps) &&
+          requestedAudioBitrateKbps > 0
+          ? resolveEffectiveBitrateKbps(audioBitrate, sourceAudioBitrateKbps)
+          : Number.isFinite(sourceAudioBitrateKbps) &&
+              sourceAudioBitrateKbps > 0
+            ? String(Math.round(sourceAudioBitrateKbps))
+            : audioBitrate
         : audioBitrate;
       if (
         shouldCapBitrateToSource &&
@@ -569,7 +573,8 @@ const transcode = async (req, res) => {
       }
       if (
         shouldCapBitrateToSource &&
-        (!Number.isFinite(requestedAudioBitrateKbps) || requestedAudioBitrateKbps <= 0) &&
+        (!Number.isFinite(requestedAudioBitrateKbps) ||
+          requestedAudioBitrateKbps <= 0) &&
         Number.isFinite(sourceAudioBitrateKbps) &&
         sourceAudioBitrateKbps > 0
       ) {
@@ -1103,7 +1108,9 @@ const transcodeStream = (req, res) => {
 // Cancel endpoint: kill ffmpeg process
 export const transcodeCancel = (req, res) => {
   if (!transcodeInProgress) {
-    return res.status(400).json({ ok: false, error: "No transcode in progress." });
+    return res
+      .status(400)
+      .json({ ok: false, error: "No transcode in progress." });
   }
 
   transcodeCancelRequested = true;
@@ -1126,10 +1133,68 @@ export const transcodeCancel = (req, res) => {
   return res.json({ ok: true, message: "Transcode cancellation requested." });
 };
 
+export const transcodePause = (_req, res) => {
+  if (!transcodeInProgress || !lastFfmpegProcess || !lastFfmpegProcess.kill) {
+    return res
+      .status(400)
+      .json({ ok: false, error: "No transcode in progress." });
+  }
+
+  if (lastFfmpegProcessPaused) {
+    return res.json({
+      ok: true,
+      paused: true,
+      message: "Transcode already paused.",
+    });
+  }
+
+  try {
+    lastFfmpegProcess.kill("SIGSTOP");
+    lastFfmpegProcessPaused = true;
+    broadcastTranscodeEvent("status", "Paused: manually paused by user.");
+    return res.json({ ok: true, paused: true, message: "Transcode paused." });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || "Failed to pause transcode.",
+    });
+  }
+};
+
+export const transcodeResume = (_req, res) => {
+  if (!transcodeInProgress || !lastFfmpegProcess || !lastFfmpegProcess.kill) {
+    return res
+      .status(400)
+      .json({ ok: false, error: "No transcode in progress." });
+  }
+
+  if (!lastFfmpegProcessPaused) {
+    return res.json({
+      ok: true,
+      paused: false,
+      message: "Transcode already running.",
+    });
+  }
+
+  try {
+    lastFfmpegProcess.kill("SIGCONT");
+    lastFfmpegProcessPaused = false;
+    broadcastTranscodeEvent("status", "Resumed: manually resumed by user.");
+    return res.json({ ok: true, paused: false, message: "Transcode resumed." });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: error?.message || "Failed to resume transcode.",
+    });
+  }
+};
+
 export default {
   transcode,
   transcodeStream,
   transcodeCancel,
+  transcodePause,
+  transcodeResume,
   transcodeSummary,
   transcodeState,
 };

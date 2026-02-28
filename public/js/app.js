@@ -263,6 +263,7 @@ transcodeOutputWrap.innerHTML = `
       <span>Activity Console</span>
       <div class="d-flex align-items-center gap-2">
         <button id="transcode-output-collapse" class="btn btn-sm btn-outline-secondary" type="button" aria-expanded="true">Collapse</button>
+        <button id="transcode-pause-inline" class="btn btn-sm btn-outline-warning d-none" type="button" data-paused="false">Pause</button>
         <button id="transcode-cancel-inline" class="btn btn-sm btn-danger d-none" type="button">Cancel</button>
       </div>
     </div>
@@ -290,6 +291,7 @@ if (outputPanelAnchor) {
 }
 const transcodeOutput = transcodeOutputWrap.querySelector('#transcode-output');
 const transcodeOutputCollapseButton = transcodeOutputWrap.querySelector('#transcode-output-collapse');
+const inlinePauseBtn = transcodeOutputWrap.querySelector('#transcode-pause-inline');
 const transcodeOutputTitle = transcodeOutputWrap.querySelector('.card-header span');
 const inlineCancelBtn = transcodeOutputWrap.querySelector('#transcode-cancel-inline');
 const transcodeOverallWrap = transcodeOutputWrap.querySelector('#transcode-overall-wrap');
@@ -407,6 +409,12 @@ function setIdleOutputPanelState() {
   if (transcodeOutputTitle) {
     transcodeOutputTitle.textContent = 'Activity Console';
   }
+  if (inlinePauseBtn) {
+    inlinePauseBtn.classList.add('d-none');
+    inlinePauseBtn.disabled = false;
+    inlinePauseBtn.dataset.paused = 'false';
+    inlinePauseBtn.textContent = 'Pause';
+  }
   if (inlineCancelBtn) {
     inlineCancelBtn.classList.add('d-none');
     inlineCancelBtn.disabled = false;
@@ -420,6 +428,15 @@ function setIdleOutputPanelState() {
   if (transcodeSavingsMeta) {
     transcodeSavingsMeta.classList.add('d-none');
   }
+}
+
+function setInlinePauseButtonState(paused) {
+  if (!inlinePauseBtn) {
+    return;
+  }
+  const isPaused = paused === true;
+  inlinePauseBtn.dataset.paused = isPaused ? 'true' : 'false';
+  inlinePauseBtn.textContent = isPaused ? 'Resume' : 'Pause';
 }
 
 if (transcodeOutputCollapseButton) {
@@ -843,6 +860,11 @@ function showTranscodeOutput() {
     inlineCancelBtn.classList.remove('d-none');
     inlineCancelBtn.disabled = false;
   }
+  if (inlinePauseBtn) {
+    inlinePauseBtn.classList.remove('d-none');
+    inlinePauseBtn.disabled = false;
+    setInlinePauseButtonState(false);
+  }
 }
 
 function showScanOutput() {
@@ -866,6 +888,11 @@ function showScanOutput() {
   if (inlineCancelBtn) {
     inlineCancelBtn.classList.add('d-none');
     inlineCancelBtn.disabled = false;
+  }
+  if (inlinePauseBtn) {
+    inlinePauseBtn.classList.add('d-none');
+    inlinePauseBtn.disabled = false;
+    setInlinePauseButtonState(false);
   }
 }
 
@@ -987,11 +1014,18 @@ function startTranscodeEventStream() {
   transcodeEventSource = new EventSource('/api/transcode/stream');
 
   transcodeEventSource.addEventListener('status', (event) => {
+    const statusText = String(event.data || '');
+    const normalizedStatus = statusText.toLowerCase();
     if (typeof event.data === 'string' && event.data.toLowerCase().includes('transcode in progress')) {
       if (transcodeBtn) {
         transcodeBtn.disabled = true;
       }
       transcodeOutputWrap.classList.remove('d-none');
+    }
+    if (normalizedStatus.includes('paused:')) {
+      setInlinePauseButtonState(true);
+    } else if (normalizedStatus.includes('resumed:')) {
+      setInlinePauseButtonState(false);
     }
     appendTranscodeOutput(`[status] ${event.data}\n`);
     notifyTranscodeCondition(event.data);
@@ -1104,6 +1138,7 @@ async function recoverTranscodeSessionIfRunning() {
     if (state.activeFile && typeof state.activeFile.file === 'string') {
       setActiveTranscodingRow(state.activeFile.file);
     }
+    setInlinePauseButtonState(state.paused === true);
 
     writeUiMessage('info', 'Resumed view of running transcode job.');
     startTranscodeEventStream();
@@ -1125,6 +1160,26 @@ if (inlineCancelBtn) {
       writeUiMessage('danger', err.message);
     } finally {
       inlineCancelBtn.disabled = false;
+    }
+  });
+}
+
+if (inlinePauseBtn) {
+  inlinePauseBtn.addEventListener('click', async () => {
+    const currentlyPaused = inlinePauseBtn.dataset.paused === 'true';
+    inlinePauseBtn.disabled = true;
+    const endpoint = currentlyPaused ? '/api/transcode/resume' : '/api/transcode/pause';
+    writeUiMessage('info', currentlyPaused ? 'Resuming transcode...' : 'Pausing transcode...');
+    try {
+      const res = await fetch(endpoint, { method: 'POST' });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || 'Pause/resume failed.');
+      setInlinePauseButtonState(data.paused === true);
+      writeUiMessage('success', data.message || (data.paused ? 'Transcode paused.' : 'Transcode resumed.'));
+    } catch (err) {
+      writeUiMessage('danger', err.message);
+    } finally {
+      inlinePauseBtn.disabled = false;
     }
   });
 }
