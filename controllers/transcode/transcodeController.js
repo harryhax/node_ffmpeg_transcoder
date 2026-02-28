@@ -34,6 +34,7 @@ import { createTranscodeProcessState } from "../../services/transcode/transcodeP
 import { buildOverallProgressSnapshot } from "../../services/transcode/transcodeProgress.js";
 import { verifyTranscodeOutput } from "../../services/transcode/transcodeVerification.js";
 import { runFfmpegTranscodeProcess } from "../../services/transcode/transcodeRunner.js";
+import { finalizeSuccessfulTranscodeFile } from "../../services/transcode/transcodeFileFinalize.js";
 const transcodeStreamState = createTranscodeStreamState();
 const transcodeProcessState = createTranscodeProcessState();
 
@@ -371,91 +372,25 @@ const transcode = async (req, res) => {
       });
       ffmpegStdout = runResult.ffmpegStdout;
       ffmpegStderr = runResult.ffmpegStderr;
-      // If transcodeLocation, copy result back to original folder
-      if (safeTranscodeLocation && tempOutput) {
-        const origOutput = buildOutputPath(file, { videoCodec, audioCodec });
-        await fs.copyFile(tempOutput, origOutput);
-        finalOutputPath = origOutput;
-        await verifyTranscodeOutput(verificationInput, origOutput);
-        // Clean up temp files
-        await fs.unlink(tempInput);
-        await fs.unlink(tempOutput);
-        if (deleteOriginal) {
-          try {
-            // console.log(`Deleting original file: ${file}`);
-            await fs.unlink(file);
-          } catch (delErr) {
-            results.push({
-              file,
-              output: origOutput,
-              ok: true,
-              warning: `Transcoded, but failed to delete original: ${delErr.message}`,
-              logPath: perFileLogPath,
-            });
-            emitTranscodeFileEvent("file-complete", {
-              file,
-              output: origOutput,
-              ok: true,
-              deletedOriginal: false,
-              warning: `Transcoded, but failed to delete original: ${delErr.message}`,
-              logPath: perFileLogPath,
-            });
-            continue;
-          }
-        }
-        results.push({
-          file,
-          output: origOutput,
-          ok: true,
-          logPath: perFileLogPath,
-        });
-        emitTranscodeFileEvent("file-complete", {
-          file,
-          output: origOutput,
-          ok: true,
-          deletedOriginal: deleteOriginal === true,
-          logPath: perFileLogPath,
-        });
-      } else {
-        finalOutputPath = verificationOutput;
-        await verifyTranscodeOutput(verificationInput, verificationOutput);
-        // No transcodeLocation, just handle output in place
-        if (deleteOriginal) {
-          try {
-            //   console.log(`Deleting original file: ${file}`);
-            await fs.unlink(file);
-          } catch (delErr) {
-            results.push({
-              file,
-              output: workingOutput,
-              ok: true,
-              warning: `Transcoded, but failed to delete original: ${delErr.message}`,
-              logPath: perFileLogPath,
-            });
-            emitTranscodeFileEvent("file-complete", {
-              file,
-              output: workingOutput,
-              ok: true,
-              deletedOriginal: false,
-              warning: `Transcoded, but failed to delete original: ${delErr.message}`,
-              logPath: perFileLogPath,
-            });
-            continue;
-          }
-        }
-        results.push({
-          file,
-          output: workingOutput,
-          ok: true,
-          logPath: perFileLogPath,
-        });
-        emitTranscodeFileEvent("file-complete", {
-          file,
-          output: workingOutput,
-          ok: true,
-          deletedOriginal: deleteOriginal === true,
-          logPath: perFileLogPath,
-        });
+      const finalizeResult = await finalizeSuccessfulTranscodeFile({
+        file,
+        workingOutput,
+        verificationInput,
+        verificationOutput,
+        safeTranscodeLocation,
+        tempInput,
+        tempOutput,
+        deleteOriginal,
+        perFileLogPath,
+        videoCodec,
+        audioCodec,
+        results,
+        emitTranscodeFileEvent,
+        verifyTranscodeOutput,
+      });
+      finalOutputPath = finalizeResult.finalOutputPath;
+      if (finalizeResult.shouldSkipRemainingSuccessFlow) {
+        continue;
       }
 
       if (saveTranscodeLog === true || saveTranscodeLog === "true") {
