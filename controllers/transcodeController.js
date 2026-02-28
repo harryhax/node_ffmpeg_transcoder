@@ -58,6 +58,7 @@ function buildFfmpegArgs(input, output, opts) {
 }
 
 let transcodeInProgress = false;
+let transcodeCancelRequested = false;
 let lastFfmpegProcessPaused = false;
 const transcodeSavingsTotals = {
   filesTranscoded: 0,
@@ -262,6 +263,7 @@ const transcode = async (req, res) => {
   }
 
   transcodeInProgress = true;
+  transcodeCancelRequested = false;
   resetTranscodeLiveSnapshots();
   broadcastTranscodeEvent(
     "status",
@@ -439,6 +441,14 @@ const transcode = async (req, res) => {
     let perFileLogPath = null;
     let sourceDurationSeconds = null;
     try {
+      if (transcodeCancelRequested) {
+        broadcastTranscodeEvent(
+          "status",
+          "Cancellation requested. Stopping remaining transcode queue.",
+        );
+        break;
+      }
+
       if (Number.isFinite(startBatteryThreshold)) {
         const battery = await readBatteryInfo();
         if (!battery.available || !Number.isFinite(battery.percent)) {
@@ -624,8 +634,19 @@ const transcode = async (req, res) => {
           }
           lastFfmpegProcess = null;
           lastFfmpegProcessPaused = false;
-          if (code === 0) resolve();
-          else reject(new Error(stderr || `ffmpeg exited with code ${code}`));
+          if (code === 0) {
+            resolve();
+            return;
+          }
+
+          if (transcodeCancelRequested) {
+            const cancelError = new Error("Transcode cancelled by user.");
+            cancelError.isCancelled = true;
+            reject(cancelError);
+            return;
+          }
+
+          reject(new Error(stderr || `ffmpeg exited with code ${code}`));
         });
       });
       // If transcodeLocation, copy result back to original folder
@@ -764,6 +785,43 @@ const transcode = async (req, res) => {
         perFileLogPath,
       });
     } catch (err) {
+      if (err?.isCancelled || transcodeCancelRequested) {
+        const cancelMessage = "Transcode cancelled by user.";
+        results.push({
+          file,
+          output: workingOutput,
+          ok: false,
+          error: cancelMessage,
+          logPath: perFileLogPath,
+        });
+        emitTranscodeFileEvent("file-failed", {
+          file,
+          output: workingOutput || null,
+          ok: false,
+          error: cancelMessage,
+          logPath: perFileLogPath,
+        });
+        broadcastTranscodeEvent(
+          "status",
+          "Cancellation requested. Stopping remaining transcode queue.",
+        );
+
+        completedFiles += 1;
+        emitOverallProgress({ currentFileIndex: fileIndex });
+
+        fileAttempts.push({
+          file,
+          status: "cancelled",
+          error: cancelMessage,
+          ffmpegCommand,
+          ffmpegStdout,
+          ffmpegStderr,
+          outputPath: finalOutputPath || workingOutput || null,
+          perFileLogPath,
+        });
+        break;
+      }
+
       results.push({
         file,
         output: workingOutput,
@@ -877,7 +935,21 @@ const transcode = async (req, res) => {
   });
 
   transcodeInProgress = false;
+  transcodeCancelRequested = false;
   transcodeStreamState.clearProgressSnapshots();
+
+  if (fileAttempts.some((attempt) => attempt.status === "cancelled")) {
+    broadcastTranscodeEvent("done", "Transcode cancelled.");
+    return res.json({
+      ok: true,
+      cancelled: true,
+      message: `Transcode cancelled. Completed ${completedFiles} of ${files.length} file(s).`,
+      results: enrichedResults,
+      summary: savingsSummary,
+      runLogPath,
+    });
+  }
+
   const failed = enrichedResults.filter((r) => !r.ok);
   if (failed.length) {
     broadcastTranscodeEvent("done", "Transcode finished with errors.");
@@ -949,6 +1021,16 @@ const transcodeStream = (req, res) => {
 
 // Cancel endpoint: kill ffmpeg process
 export const transcodeCancel = (req, res) => {
+  if (!transcodeInProgress) {
+    return res.status(400).json({ ok: false, error: "No transcode in progress." });
+  }
+
+  transcodeCancelRequested = true;
+  broadcastTranscodeEvent(
+    "status",
+    "Cancellation requested. Current and queued transcodes will stop.",
+  );
+
   if (lastFfmpegProcess && lastFfmpegProcess.kill) {
     if (lastFfmpegProcessPaused) {
       try {
@@ -958,9 +1040,9 @@ export const transcodeCancel = (req, res) => {
     lastFfmpegProcess.kill("SIGTERM");
     lastFfmpegProcessPaused = false;
     console.log("Transcode cancelled by user.");
-    return res.json({ ok: true, message: "Transcode cancelled." });
+    return res.json({ ok: true, message: "Transcode cancellation requested." });
   }
-  res.status(400).json({ ok: false, error: "No transcode in progress." });
+  return res.json({ ok: true, message: "Transcode cancellation requested." });
 };
 
 export default {

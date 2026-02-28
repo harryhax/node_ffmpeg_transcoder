@@ -1,4 +1,3 @@
-import { renderMessage } from './utils.js';
 import { setSelectOptions, renderResults } from './ui.js';
 
 const AUDIT_SETTINGS_KEY = 'auditFormSettings';
@@ -43,23 +42,29 @@ export async function loadCodecs(videoCodecSelect, audioCodecSelect) {
   const response = await fetch('/api/options/codecs');
   const data = await response.json();
   if (!response.ok || !data.ok) throw new Error(data.error || 'Unable to load codec options.');
-  setSelectOptions(videoCodecSelect, data.videoCodecs, 'hevc');
-  setSelectOptions(audioCodecSelect, data.audioCodecs, 'ac3');
+  setSelectOptions(videoCodecSelect, data.videoCodecs, 'hevc_videotoolbox');
+  setSelectOptions(audioCodecSelect, data.audioCodecs, 'aac');
 }
 
 export async function loadDirectories(rootInput, rootPicker) {
   const base = rootInput.value || '.';
+  const currentRoot = String(rootInput.value || '').trim() || String(base).trim();
   const query = new URLSearchParams({ base, maxDepth: '1' });
   const response = await fetch(`/api/options/directories?${query.toString()}`);
   const data = await response.json();
   if (!response.ok || !data.ok) throw new Error(data.error || 'Unable to load directories.');
-  const options = ['<option value="">Select a discovered server folder...</option>'];
+  const options = [];
 
   if (typeof data.parent === 'string' && data.parent) {
-    options.push(`<option value="${data.parent}">⬅ Go Back (..)</option>`);
+    options.push(`<option value="${data.parent}">← Back ...</option>`);
   }
 
-  for (const dir of data.directories) {
+  const discoveredDirs = Array.isArray(data.directories) ? data.directories : [];
+  if (currentRoot && !discoveredDirs.includes(currentRoot)) {
+    options.push(`<option value="${currentRoot}" selected>${currentRoot}</option>`);
+  }
+
+  for (const dir of discoveredDirs) {
     const selected = dir === rootInput.value ? ' selected' : '';
     options.push(`<option value="${dir}"${selected}>${dir}</option>`);
   }
@@ -76,25 +81,31 @@ function setScanButtonState(runButton, cancelScanButton, inProgress) {
   cancelScanButton.disabled = !inProgress;
 }
 
-export async function runAudit(form, runButton, cancelScanButton, message, resultsBody, renderResultsFn) {
+export async function runAudit(form, runButton, cancelScanButton, resultsBody, renderResultsFn, scanHooks = {}) {
+  const notify = (eventName, text) => {
+    const fn = scanHooks?.[eventName];
+    if (typeof fn === 'function') {
+      fn(text);
+    }
+  };
+
   const formData = new FormData(form);
   const payload = {
     root: formData.get('root') || '.',
     videoCodec: formData.get('videoCodec') || '',
-    videoBitrateOp: formData.get('videoBitrateOp') || '>=',
+    videoBitrateOp: formData.get('videoBitrateOp') || '=',
     videoBitrate: formData.get('videoBitrate') ? `${formData.get('videoBitrate')}k` : '',
     videoBitrateTolerancePct: readSavedBitrateTolerancePct(),
     audioCodec: formData.get('audioCodec') || '',
-    audioChannelsOp: formData.get('audioChannelsOp') || '>=',
+    audioChannelsOp: formData.get('audioChannelsOp') || '=',
     audioChannels: formData.get('audioChannels') || ''
   };
   setScanButtonState(runButton, cancelScanButton, true);
-  message.innerHTML = '';
   resultsBody.innerHTML = '<tr><td colspan="11" class="text-muted">Scanning files...</td></tr>';
   if (!payload.root || !String(payload.root).trim()) {
     setScanButtonState(runButton, cancelScanButton, false);
     resultsBody.innerHTML = '<tr><td colspan="11" class="text-muted">Scan files to see results.</td></tr>';
-    renderMessage(message, 'danger', 'Please enter a root folder path on the server.');
+    notify('onError', 'Please enter a root folder path on the server.');
     return;
   }
 
@@ -105,13 +116,16 @@ export async function runAudit(form, runButton, cancelScanButton, message, resul
     cancelScanButton.onclick = () => {
       if (activeAuditAbortController) {
         activeAuditAbortController.abort();
-        renderMessage(message, 'warning', 'Cancelling scan...');
+        notify('onProgress', 'Cancelling scan...');
       }
     };
   }
 
   try {
     const listQuery = new URLSearchParams({ root: String(payload.root).trim() });
+    if (typeof scanHooks.onStart === 'function') {
+      scanHooks.onStart(String(payload.root).trim());
+    }
     const scanExtensions = readSavedScanExtensions();
     if (scanExtensions) {
       listQuery.set('scanExtensions', scanExtensions);
@@ -127,7 +141,7 @@ export async function runAudit(form, runButton, cancelScanButton, message, resul
     const files = Array.isArray(listData.files) ? listData.files : [];
     if (!files.length) {
       resultsBody.innerHTML = '<tr><td colspan="11" class="text-muted">No video files found.</td></tr>';
-      renderMessage(message, 'info', `No video files found in ${listData.rootPath || payload.root}.`);
+      notify('onDone', `No video files found in ${listData.rootPath || payload.root}.`);
       return;
     }
 
@@ -145,7 +159,7 @@ export async function runAudit(form, runButton, cancelScanButton, message, resul
       });
       const data = await response.json();
       if (!response.ok || !data.ok) {
-        throw new Error(data.error || `Audit failed for ${filePath}.`);
+        throw new Error(data.error || `Scan failed for ${filePath}.`);
       }
 
       const row = data.rows?.[0];
@@ -165,21 +179,24 @@ export async function runAudit(form, runButton, cancelScanButton, message, resul
         mismatchedCount
       });
 
-      renderMessage(message, 'info', `Scanning ${rows.length}/${files.length} files in ${rootPath}... Mismatches: ${mismatchedCount}.`);
+      if (typeof scanHooks.onFileScanned === 'function') {
+        scanHooks.onFileScanned(filePath, rows.length, files.length);
+      }
+
+      const progressText = `Scanning ${rows.length}/${files.length} files in ${rootPath}... Mismatches: ${mismatchedCount}.`;
+      notify('onProgress', progressText);
     }
 
-    renderMessage(
-      message,
-      'info',
-      `Checked ${rows.length} files in ${rootPath}. Mismatches: ${mismatchedCount}.`
-    );
+    const doneText = `Checked ${rows.length} files in ${rootPath}. Mismatches: ${mismatchedCount}.`;
+    notify('onDone', doneText);
   } catch (error) {
     if (error?.name === 'AbortError') {
       const scannedRows = Array.isArray(globalThis.window?._lastAuditRows) ? globalThis.window._lastAuditRows.length : 0;
-      renderMessage(message, 'warning', `Scan cancelled. ${scannedRows} files were scanned.`);
+      const cancelledText = `Scan cancelled. ${scannedRows} files were scanned.`;
+      notify('onCancelled', cancelledText);
     } else {
       resultsBody.innerHTML = '<tr><td colspan="11" class="text-muted">Scan files to see results.</td></tr>';
-      renderMessage(message, 'danger', error.message);
+      notify('onError', error.message);
     }
   } finally {
     activeAuditAbortController = null;

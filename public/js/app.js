@@ -1,10 +1,11 @@
-import { createLogViewerHref, escapeHtml, renderMessage } from './utils.js';
+import { createLogViewerHref } from './utils.js';
 import { renderResults, setSelectOptions, getRowState, getStatusLabel } from './ui.js';
 import { loadCodecs, loadDirectories, runAudit } from './audit.js';
 
 const CODEC_VISIBILITY_KEY = 'codecVisibilityMode';
 const AUDIT_SETTINGS_KEY = 'auditFormSettings';
 const LAST_SCAN_RESULTS_KEY = 'lastAuditScanResults';
+const OUTPUT_COLLAPSED_KEY = 'activityConsoleCollapsed';
 const COMMON_VIDEO_CODECS = ['hevc_videotoolbox', 'hevc', 'h264_videotoolbox', 'h264', 'libx265', 'libx264', 'vp9', 'libvpx-vp9', 'mpeg4', 'av1'];
 const COMMON_AUDIO_CODECS = ['ac3', 'aac', 'eac3', 'libopus', 'opus', 'mp3', 'flac', 'dts', 'pcm_s16le', 'vorbis'];
 
@@ -166,11 +167,11 @@ function saveAuditSettings() {
     transcodeLocation: typeof existing.transcodeLocation === 'string' ? existing.transcodeLocation : '',
     scanExtensions: typeof existing.scanExtensions === 'string' ? existing.scanExtensions : '',
     videoCodec: data.get('videoCodec') || '',
-    videoBitrateOp: data.get('videoBitrateOp') || '>=',
+    videoBitrateOp: data.get('videoBitrateOp') || '=',
     videoBitrate: data.get('videoBitrate') || '',
     videoBitrateTolerancePct: typeof existing.videoBitrateTolerancePct === 'string' ? existing.videoBitrateTolerancePct : '10',
     audioCodec: data.get('audioCodec') || '',
-    audioChannelsOp: data.get('audioChannelsOp') || '>=',
+    audioChannelsOp: data.get('audioChannelsOp') || '=',
     audioChannels: data.get('audioChannels') || '',
     pauseBatteryPct: typeof existing.pauseBatteryPct === 'string' ? existing.pauseBatteryPct : '',
     startBatteryPct: typeof existing.startBatteryPct === 'string' ? existing.startBatteryPct : '',
@@ -233,11 +234,10 @@ function applySavedAuditSettings(settings) {
 const form = document.getElementById('audit-form');
 const runButton = document.getElementById('run-btn');
 const cancelScanButton = document.getElementById('cancel-scan-btn');
-const message = document.getElementById('message');
+const outputPanelAnchor = document.getElementById('output-panel-anchor');
 const resultsBody = document.getElementById('results-body');
 const rootInput = document.getElementById('root');
 const rootPicker = document.getElementById('root-picker');
-const refreshDirsButton = document.getElementById('refresh-dirs');
 const videoCodecSelect = document.getElementById('videoCodec');
 const audioCodecSelect = document.getElementById('audioCodec');
 const transcodeBtn = document.getElementById('transcode-btn');
@@ -255,12 +255,15 @@ let activeTranscodingFilePath = null;
 let latestScanSourceTotalBytes = null;
 
 const transcodeOutputWrap = document.createElement('div');
-transcodeOutputWrap.className = 'mt-3 d-none';
+transcodeOutputWrap.className = 'mt-3';
 transcodeOutputWrap.innerHTML = `
   <div class="card border-secondary">
     <div class="card-header py-2 d-flex align-items-center justify-content-between">
-      <span>Transcode Progress</span>
-      <button id="transcode-cancel-inline" class="btn btn-sm btn-danger d-none" type="button">Cancel</button>
+      <span>Activity Console</span>
+      <div class="d-flex align-items-center gap-2">
+        <button id="transcode-output-collapse" class="btn btn-sm btn-outline-secondary" type="button" aria-expanded="true">Collapse</button>
+        <button id="transcode-cancel-inline" class="btn btn-sm btn-danger d-none" type="button">Cancel</button>
+      </div>
     </div>
     <div class="card-body py-2">
       <div id="transcode-overall-wrap" class="mb-2 d-none">
@@ -277,14 +280,16 @@ transcodeOutputWrap.innerHTML = `
         </div>
         <div id="transcode-progress-meta" class="small text-muted mt-1">Preparing transcode...</div>
       </div>
-      <button id="toggle-transcode-output" class="btn btn-sm btn-outline-secondary mb-2" type="button">Show detailed logs</button>
-      <pre id="transcode-output" class="mb-0 d-none" style="max-height: 240px; overflow: auto; white-space: pre-wrap;"></pre>
+      <pre id="transcode-output" class="mb-0 d-none" style="height: 240px; overflow: auto; white-space: pre-wrap;"></pre>
     </div>
   </div>
 `;
-message.insertAdjacentElement('afterend', transcodeOutputWrap);
+if (outputPanelAnchor) {
+  outputPanelAnchor.insertAdjacentElement('afterend', transcodeOutputWrap);
+}
 const transcodeOutput = transcodeOutputWrap.querySelector('#transcode-output');
-const toggleTranscodeOutputBtn = transcodeOutputWrap.querySelector('#toggle-transcode-output');
+const transcodeOutputCollapseButton = transcodeOutputWrap.querySelector('#transcode-output-collapse');
+const transcodeOutputTitle = transcodeOutputWrap.querySelector('.card-header span');
 const inlineCancelBtn = transcodeOutputWrap.querySelector('#transcode-cancel-inline');
 const transcodeOverallWrap = transcodeOutputWrap.querySelector('#transcode-overall-wrap');
 const transcodeOverallBar = transcodeOutputWrap.querySelector('#transcode-overall-bar');
@@ -293,21 +298,136 @@ const transcodeSavingsMeta = transcodeOutputWrap.querySelector('#transcode-savin
 const transcodeProgressWrap = transcodeOutputWrap.querySelector('#transcode-progress-wrap');
 const transcodeProgressBar = transcodeOutputWrap.querySelector('#transcode-progress-bar');
 const transcodeProgressMeta = transcodeOutputWrap.querySelector('#transcode-progress-meta');
+let transcodeOutputMessages = [];
+let transcodeOutputCollapsed = true;
+const TRANSODE_OUTPUT_EXPANDED_HEIGHT_PX = 240;
+const TRANSODE_OUTPUT_COLLAPSED_HEIGHT_PX = 56;
 
-function setTranscodeOutputVisibility(isVisible) {
-  if (!transcodeOutput || !toggleTranscodeOutputBtn) {
+function readOutputCollapsedPreference() {
+  try {
+    const raw = globalThis.localStorage?.getItem(OUTPUT_COLLAPSED_KEY);
+    if (raw === null) {
+      return true;
+    }
+    return raw === 'true';
+  } catch {
+    return true;
+  }
+}
+
+function saveOutputCollapsedPreference(isCollapsed) {
+  try {
+    globalThis.localStorage?.setItem(OUTPUT_COLLAPSED_KEY, isCollapsed ? 'true' : 'false');
+  } catch {
+  }
+}
+
+function escapeConsoleHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function classifyConsoleLine(lineText) {
+  const text = String(lineText || '').toLowerCase();
+  if (text.includes('[error]') || text.includes('[danger]') || text.includes('[failed]') || text.includes(' failed')) {
+    return 'console-line-error';
+  }
+  if (text.includes('[warning]') || text.includes('[warn]') || text.includes(' warning')) {
+    return 'console-line-warning';
+  }
+  if (text.includes('[success]') || text.includes('[done]') || text.includes(' completed') || text.includes(' complete')) {
+    return 'console-line-success';
+  }
+  return 'console-line-default';
+}
+
+function renderExpandedConsoleMarkup(text) {
+  const lines = String(text || '').split('\n');
+  return lines
+    .map((line, idx) => {
+      const className = classifyConsoleLine(line);
+      const suffix = idx < lines.length - 1 ? '\n' : '';
+      return `<span class="${className}">${escapeConsoleHtml(line)}${suffix}</span>`;
+    })
+    .join('');
+}
+
+function renderTranscodeOutput() {
+  if (!transcodeOutput) {
     return;
   }
-  transcodeOutput.classList.toggle('d-none', !isVisible);
-  toggleTranscodeOutputBtn.textContent = isVisible ? 'Hide detailed logs' : 'Show detailed logs';
+
+  if (transcodeOutputCollapsed) {
+    const lastMessage = transcodeOutputMessages.length > 0
+      ? String(transcodeOutputMessages[transcodeOutputMessages.length - 1] || '').trimEnd()
+      : '';
+    transcodeOutput.textContent = lastMessage;
+    transcodeOutput.style.height = `${TRANSODE_OUTPUT_COLLAPSED_HEIGHT_PX}px`;
+    transcodeOutput.style.overflow = 'auto';
+  } else {
+    const fullText = transcodeOutputMessages.join('');
+    transcodeOutput.innerHTML = renderExpandedConsoleMarkup(fullText);
+    transcodeOutput.style.height = `${TRANSODE_OUTPUT_EXPANDED_HEIGHT_PX}px`;
+    transcodeOutput.style.overflow = 'auto';
+  }
+
+  transcodeOutput.classList.remove('d-none');
+  transcodeOutput.scrollTop = transcodeOutput.scrollHeight;
 }
 
-if (toggleTranscodeOutputBtn) {
-  toggleTranscodeOutputBtn.addEventListener('click', () => {
-    const isCurrentlyVisible = transcodeOutput && !transcodeOutput.classList.contains('d-none');
-    setTranscodeOutputVisibility(!isCurrentlyVisible);
+function setTranscodeOutputCollapsed(isCollapsed, { persist = true } = {}) {
+  transcodeOutputCollapsed = isCollapsed === true;
+  if (persist) {
+    saveOutputCollapsedPreference(transcodeOutputCollapsed);
+  }
+  if (transcodeOutputCollapseButton) {
+    transcodeOutputCollapseButton.textContent = transcodeOutputCollapsed ? 'Expand' : 'Collapse';
+    transcodeOutputCollapseButton.setAttribute('aria-expanded', transcodeOutputCollapsed ? 'false' : 'true');
+  }
+  renderTranscodeOutput();
+}
+
+function clearTranscodeOutput() {
+  transcodeOutputMessages = [];
+  renderTranscodeOutput();
+}
+
+function isAnyJobRunning() {
+  const scanRunning = runButton?.disabled === true;
+  const transcodeRunning = transcodeBtn?.disabled === true;
+  return scanRunning || transcodeRunning;
+}
+
+function setIdleOutputPanelState() {
+  if (transcodeOutputTitle) {
+    transcodeOutputTitle.textContent = 'Activity Console';
+  }
+  if (inlineCancelBtn) {
+    inlineCancelBtn.classList.add('d-none');
+    inlineCancelBtn.disabled = false;
+  }
+  if (transcodeProgressWrap) {
+    transcodeProgressWrap.classList.add('d-none');
+  }
+  if (transcodeOverallWrap) {
+    transcodeOverallWrap.classList.add('d-none');
+  }
+  if (transcodeSavingsMeta) {
+    transcodeSavingsMeta.classList.add('d-none');
+  }
+}
+
+if (transcodeOutputCollapseButton) {
+  transcodeOutputCollapseButton.addEventListener('click', () => {
+    setTranscodeOutputCollapsed(!transcodeOutputCollapsed);
   });
 }
+setTranscodeOutputCollapsed(readOutputCollapsedPreference(), { persist: false });
+setIdleOutputPanelState();
 
 function formatDurationClock(totalSeconds) {
   if (!Number.isFinite(totalSeconds) || totalSeconds < 0) {
@@ -378,10 +498,35 @@ function appendTranscodeOutput(text) {
   if (!transcodeOutput) {
     return;
   }
-  const next = transcodeOutput.textContent + text;
+  transcodeOutputMessages.push(String(text || ''));
   const maxChars = 18000;
-  transcodeOutput.textContent = next.length > maxChars ? next.slice(next.length - maxChars) : next;
-  transcodeOutput.scrollTop = transcodeOutput.scrollHeight;
+  let totalChars = transcodeOutputMessages.reduce((sum, message) => sum + message.length, 0);
+  while (totalChars > maxChars && transcodeOutputMessages.length > 1) {
+    const removed = transcodeOutputMessages.shift();
+    totalChars -= removed ? removed.length : 0;
+  }
+  renderTranscodeOutput();
+}
+
+function writeUiMessage(level, text, logPath = null) {
+  const normalizedLevel = String(level || 'info').toUpperCase();
+  const safeText = String(text || '').trim();
+  if (!safeText) {
+    return;
+  }
+
+  transcodeOutputWrap.classList.remove('d-none');
+  if (!isAnyJobRunning()) {
+    setIdleOutputPanelState();
+  }
+
+  appendTranscodeOutput(`[${normalizedLevel}] ${safeText}\n`);
+  if (logPath) {
+    const href = createLogViewerHref(logPath);
+    if (href) {
+      appendTranscodeOutput(`[LOG] ${href}\n`);
+    }
+  }
 }
 
 function formatMB(bytes) {
@@ -585,7 +730,7 @@ async function refreshRowsAfterTranscode(transcodeResults) {
     body: JSON.stringify({
       root: rootInput?.value || '.',
       videoCodec: formData.get('videoCodec') || '',
-      videoBitrateOp: formData.get('videoBitrateOp') || '>=',
+      videoBitrateOp: formData.get('videoBitrateOp') || '=',
       videoBitrate: formData.get('videoBitrate') ? `${formData.get('videoBitrate')}k` : '',
       videoBitrateTolerancePct: typeof saved.videoBitrateTolerancePct === 'string' ? saved.videoBitrateTolerancePct : '10',
       audioCodec: formData.get('audioCodec') || '',
@@ -663,9 +808,10 @@ function showTranscodeOutput() {
     clearTimeout(transcodeOutputTimeout);
     transcodeOutputTimeout = null;
   }
-  transcodeOutputWrap.classList.remove('d-none');
-  transcodeOutput.textContent = '';
-  setTranscodeOutputVisibility(false);
+  if (transcodeOutputTitle) {
+    transcodeOutputTitle.textContent = 'Transcode Progress';
+  }
+  clearTranscodeOutput();
   if (transcodeOverallWrap) {
     transcodeOverallWrap.classList.remove('d-none');
   }
@@ -698,14 +844,41 @@ function showTranscodeOutput() {
   }
 }
 
+function showScanOutput() {
+  if (transcodeOutputTimeout) {
+    clearTimeout(transcodeOutputTimeout);
+    transcodeOutputTimeout = null;
+  }
+  if (transcodeOutputTitle) {
+    transcodeOutputTitle.textContent = 'Scan Output';
+  }
+  clearTranscodeOutput();
+  if (transcodeOverallWrap) {
+    transcodeOverallWrap.classList.add('d-none');
+  }
+  if (transcodeProgressWrap) {
+    transcodeProgressWrap.classList.add('d-none');
+  }
+  if (transcodeSavingsMeta) {
+    transcodeSavingsMeta.classList.add('d-none');
+  }
+  if (inlineCancelBtn) {
+    inlineCancelBtn.classList.add('d-none');
+    inlineCancelBtn.disabled = false;
+  }
+}
+
+function hideScanOutputLater() {
+  hideTranscodeOutputLater();
+}
+
 function hideTranscodeOutputLater() {
   transcodeOutputTimeout = setTimeout(() => {
     if (inlineCancelBtn) {
       inlineCancelBtn.classList.add('d-none');
       inlineCancelBtn.disabled = false;
     }
-    transcodeOutputWrap.classList.add('d-none');
-    transcodeOutput.textContent = '';
+    setIdleOutputPanelState();
     if (transcodeProgressWrap) {
       transcodeProgressWrap.classList.add('d-none');
     }
@@ -801,16 +974,11 @@ function notifyTranscodeCondition(text) {
     return;
   }
   const level = String(text).toLowerCase().includes('resumed:') ? 'info' : 'warning';
-  renderMessage(message, level, text);
+  writeUiMessage(level, text);
 }
 
-function renderMessageWithLogLink(container, type, text, logPath) {
-  const safeText = escapeHtml(String(text || '')).replace(/\n/g, '<br />');
-  const href = createLogViewerHref(logPath);
-  const logHtml = href
-    ? ` <a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">See log</a>`
-    : '';
-  container.innerHTML = `<div class="alert alert-${type}" role="alert">${safeText}${logHtml}</div>`;
+function renderMessageWithLogLink(type, text, logPath) {
+  writeUiMessage(type, text, logPath);
 }
 
 function startTranscodeEventStream() {
@@ -936,7 +1104,7 @@ async function recoverTranscodeSessionIfRunning() {
       setActiveTranscodingRow(state.activeFile.file);
     }
 
-    renderMessage(message, 'info', 'Resumed view of running transcode job.');
+    writeUiMessage('info', 'Resumed view of running transcode job.');
     startTranscodeEventStream();
   } catch {
   }
@@ -946,14 +1114,14 @@ async function recoverTranscodeSessionIfRunning() {
 if (inlineCancelBtn) {
   inlineCancelBtn.addEventListener('click', async () => {
     inlineCancelBtn.disabled = true;
-    renderMessage(message, 'info', 'Cancelling transcode...');
+    writeUiMessage('info', 'Cancelling transcode...');
     try {
       const res = await fetch('/api/transcode/cancel', { method: 'POST' });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || 'Cancel failed.');
-      renderMessage(message, 'success', data.message || 'Transcode cancelled.');
+      writeUiMessage('success', data.message || 'Transcode cancelled.');
     } catch (err) {
-      renderMessage(message, 'danger', err.message);
+      writeUiMessage('danger', err.message);
     } finally {
       inlineCancelBtn.disabled = false;
     }
@@ -982,7 +1150,7 @@ async function syncCodecDropdowns() {
   const gpuPreferred = ['hevc_videotoolbox', 'h264_videotoolbox', 'cuda', 'nvenc', 'qsv', 'vaapi'];
   let defaultVideo = savedSettings.videoCodec || videoCodecOptions.find(c => gpuPreferred.includes(c.value))?.value || videoCodecOptions[0]?.value || '';
   setSelectOptions(videoCodecSelect, videoCodecOptions, defaultVideo);
-  setSelectOptions(audioCodecSelect, filteredAudioCodecs, savedSettings.audioCodec || 'ac3');
+  setSelectOptions(audioCodecSelect, filteredAudioCodecs, savedSettings.audioCodec || 'aac');
 }
 
 // Initial load
@@ -1003,15 +1171,15 @@ async function syncCodecDropdowns() {
     }
     const restored = restoreCachedScanResultsForCurrentRoot();
     if (restored) {
-      renderMessage(message, 'info', `Restored saved scan results for ${rootInput?.value || './smoke-fixtures'}.`);
+      writeUiMessage('info', `Restored saved scan results for ${rootInput?.value || './smoke-fixtures'}.`);
     } else {
-      renderMessage(message, 'info', `Scan files using root folder: ${rootInput?.value || './smoke-fixtures'}.`);
+      writeUiMessage('info', `Scan files using root folder: ${rootInput?.value || './smoke-fixtures'}.`);
     }
     await recoverTranscodeSessionIfRunning();
   } catch (error) {
     await refreshToolHealthWarning();
     if (!isToolAvailabilityError(error)) {
-      renderMessage(message, 'danger', error.message);
+      writeUiMessage('danger', error.message);
     }
   }
 })();
@@ -1033,9 +1201,9 @@ if (rootPicker) {
       }
       const restored = restoreCachedScanResultsForCurrentRoot();
       if (restored) {
-        renderMessage(message, 'info', `Restored saved scan results for ${rootInput.value}.`);
+        writeUiMessage('info', `Restored saved scan results for ${rootInput.value}.`);
       } else {
-        renderMessage(message, 'info', `No saved scan results found for ${rootInput.value}.`);
+        writeUiMessage('info', `No saved scan results found for ${rootInput.value}.`);
       }
     }
   });
@@ -1046,18 +1214,7 @@ if (rootInput) {
     saveAuditSettings();
     const restored = restoreCachedScanResultsForCurrentRoot();
     if (restored) {
-      renderMessage(message, 'info', `Restored saved scan results for ${rootInput.value}.`);
-    }
-  });
-}
-
-if (refreshDirsButton) {
-  refreshDirsButton.addEventListener('click', async () => {
-    try {
-      await loadDirectories(rootInput, rootPicker);
-      renderMessage(message, 'info', 'Server folder list refreshed.');
-    } catch (error) {
-      renderMessage(message, 'danger', error.message);
+      writeUiMessage('info', `Restored saved scan results for ${rootInput.value}.`);
     }
   });
 }
@@ -1131,14 +1288,75 @@ function renderResultsWithStore(rows, ...args) {
   }
 }
 
+function confirmDeleteOriginalWarning() {
+  return new Promise((resolve) => {
+    const modalElement = document.getElementById('deleteOriginalWarningModal');
+    const confirmButton = document.getElementById('confirm-delete-original-btn');
+
+    if (!modalElement || !confirmButton || !globalThis.bootstrap) {
+      resolve(false);
+      return;
+    }
+
+    const modal = new globalThis.bootstrap.Modal(modalElement);
+    let resolved = false;
+
+    const cleanup = () => {
+      confirmButton.removeEventListener('click', onConfirm);
+      modalElement.removeEventListener('hidden.bs.modal', onHidden);
+    };
+
+    const onConfirm = () => {
+      resolved = true;
+      cleanup();
+      modal.hide();
+      resolve(true);
+    };
+
+    const onHidden = () => {
+      cleanup();
+      if (!resolved) {
+        resolve(false);
+      }
+    };
+
+    confirmButton.addEventListener('click', onConfirm);
+    modalElement.addEventListener('hidden.bs.modal', onHidden);
+    modal.show();
+  });
+}
+
 // Use this patched version for audit
 form.addEventListener('submit', async (event) => {
   event.preventDefault();
   saveAuditSettings();
-  await runAudit(form, runButton, cancelScanButton, message, resultsBody, (rows, summary) => {
+  showScanOutput();
+  await runAudit(form, runButton, cancelScanButton, resultsBody, (rows, summary) => {
     renderResultsWithStore(rows, resultsBody, () => {});
     updateOriginalTotalFromRows(rows);
     saveCachedScanResults(rows, summary || {});
+  }, {
+    onStart: (rootPath) => {
+      appendTranscodeOutput(`[status] Starting scan in ${rootPath}\n`);
+    },
+    onFileScanned: (filePath, index, total) => {
+      appendTranscodeOutput(`[scan] ${index}/${total} ${filePath}\n`);
+    },
+    onProgress: (text) => {
+      appendTranscodeOutput(`[status] ${text}\n`);
+    },
+    onDone: (text) => {
+      appendTranscodeOutput(`[done] ${text}\n`);
+      hideScanOutputLater();
+    },
+    onCancelled: (text) => {
+      appendTranscodeOutput(`[done] ${text}\n`);
+      hideScanOutputLater();
+    },
+    onError: (text) => {
+      appendTranscodeOutput(`[error] ${text}\n`);
+      hideScanOutputLater();
+    }
   });
 });
 
@@ -1160,7 +1378,7 @@ transcodeBtn.addEventListener('click', async (event) => {
   // Get all checked files
   const checked = Array.from(document.querySelectorAll('.row-checkbox:checked'));
   if (!checked.length) {
-    renderMessage(message, 'warning', 'Please select at least one file to transcode.');
+    writeUiMessage('warning', 'Please select at least one file to transcode.');
     return;
   }
   // Get file info from table rows
@@ -1171,11 +1389,11 @@ transcodeBtn.addEventListener('click', async (event) => {
   const transcodeRows = rows.filter(row => row.matches !== true);
   const skippedMatchCount = rows.length - transcodeRows.length;
   if (!rows.length) {
-    renderMessage(message, 'danger', 'Could not resolve selected files. Please re-run the audit.');
+    writeUiMessage('danger', 'Could not resolve selected files. Please re-run the scan.');
     return;
   }
   if (!transcodeRows.length) {
-    renderMessage(message, 'warning', 'All selected files are already MATCH and were skipped.');
+    writeUiMessage('warning', 'All selected files are already MATCH and were skipped.');
     return;
   }
   // Get audit settings
@@ -1191,6 +1409,15 @@ transcodeBtn.addEventListener('click', async (event) => {
   const startBatteryPct = savedSettings.startBatteryPct || '';
   const saveTranscodeLog = savedSettings.saveTranscodeLog === true;
   saveAuditSettings();
+
+  if (deleteOriginal) {
+    const confirmed = await confirmDeleteOriginalWarning();
+    if (!confirmed) {
+      writeUiMessage('warning', 'Transcode cancelled. Original files were not deleted.');
+      return;
+    }
+  }
+
   // Send to backend
   transcodeBtn.disabled = true;
   showTranscodeOutput();
@@ -1226,9 +1453,9 @@ transcodeBtn.addEventListener('click', async (event) => {
       const failedReasons = Array.isArray(data?.failedReasons) ? data.failedReasons : [];
       const powerReasons = failedReasons.filter((reason) => isPowerManagementCondition(reason));
       if (powerReasons.length > 0) {
-        renderMessageWithLogLink(message, 'warning', `Power management blocked transcode: ${powerReasons.join(' | ')}`, data?.runLogPath);
+        renderMessageWithLogLink('warning', `Power management blocked transcode: ${powerReasons.join(' | ')}`, data?.runLogPath);
       } else {
-        renderMessageWithLogLink(message, 'danger', data.error || 'Transcode failed.', data?.runLogPath);
+        renderMessageWithLogLink('danger', data.error || 'Transcode failed.', data?.runLogPath);
       }
       return;
     }
@@ -1238,9 +1465,9 @@ transcodeBtn.addEventListener('click', async (event) => {
       });
     }
     const skippedNote = skippedMatchCount > 0 ? ` Skipped ${skippedMatchCount} MATCH file(s).` : '';
-    renderMessageWithLogLink(message, 'success', `${data.message || 'Transcode started.'}${skippedNote}`, data?.runLogPath);
+    renderMessageWithLogLink('success', `${data.message || 'Transcode started.'}${skippedNote}`, data?.runLogPath);
   } catch (err) {
-    renderMessageWithLogLink(message, 'danger', err.message, null);
+    renderMessageWithLogLink('danger', err.message, null);
   } finally {
     setActiveTranscodingRow(null);
     hideTranscodeOutputLater();

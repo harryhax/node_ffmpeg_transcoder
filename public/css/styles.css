@@ -1,3 +1,7 @@
+html {
+  font-size: 15px;
+}
+
 body {
   background: #2b3038;
 }
@@ -49,6 +53,11 @@ body {
   vertical-align: middle;
 }
 
+#results-table-wrap {
+  max-height: 420px;
+  overflow: auto;
+}
+
 #results-table th,
 #results-table td {
   text-align: center;
@@ -72,6 +81,33 @@ body {
 
 #results-table tr.transcode-result-mismatch td {
   background: #f8d7da;
+}
+
+#transcode-output {
+  background: #0b0d10;
+  color: #a9b0b8;
+  border: 1px solid #1f2933;
+  border-radius: 0.375rem;
+  padding: 0.75rem;
+  font-size: 0.8rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  line-height: 1.35;
+}
+
+#transcode-output .console-line-default {
+  color: #a9b0b8;
+}
+
+#transcode-output .console-line-error {
+  color: #ff6b6b;
+}
+
+#transcode-output .console-line-warning {
+  color: #f59f00;
+}
+
+#transcode-output .console-line-success {
+  color: #51cf66;
 }
 
 .details-icon-btn {

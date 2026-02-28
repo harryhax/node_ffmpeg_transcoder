@@ -7,7 +7,7 @@
       <span>Scan/Transcode Options</span>
     </div>
     <div class="card-body">
-      <div class="form-text mb-2">Choose whether the audit form shows all codecs or a focused top 10 list.</div>
+      <div class="form-text mb-2">Choose whether the Home page shows all codecs or a focused top 10 list.</div>
       <div class="form-check">
         <input class="form-check-input" type="checkbox" id="show-common-codecs" />
         <label class="form-check-label" for="show-common-codecs">
@@ -38,20 +38,32 @@
       <span>Settings</span>
     </div>
     <div class="card-body">
-      <div class="form-text mb-2">Configure general defaults used by audit and transcode.</div>
+      <div class="form-text mb-2">Configure general defaults used by Home and transcode.</div>
       <div class="mb-3">
         <label for="transcode-location-setting" class="form-label">Transcode location (server folder)</label>
-        <input id="transcode-location-setting" class="form-control" type="text" placeholder="/tmp/transcode or /Users/yourname/TranscodeTemp" />
+        <input id="transcode-location-setting" type="hidden" />
+        <select id="transcode-location-picker" class="form-select">
+          <option value="" selected>Not set (optional)</option>
+        </select>
+        <div class="form-text">Use “← Back ...” to move up folders.</div>
         <div class="form-text">Optional. If set, files are copied here for transcoding, then copied back after completion.</div>
       </div>
       <div class="mb-3">
         <label for="ffmpeg-dir-setting" class="form-label">FFmpeg folder override</label>
-        <input id="ffmpeg-dir-setting" class="form-control" type="text" placeholder="/opt/homebrew/bin" />
+        <input id="ffmpeg-dir-setting" type="hidden" />
+        <select id="ffmpeg-dir-picker" class="form-select">
+          <option value="" selected>Use system default</option>
+        </select>
+        <div class="form-text">Use “← Back ...” to move up folders.</div>
         <div class="form-text">Optional. Enter the folder containing ffmpeg (for example: /opt/homebrew/bin). Do not enter the ffmpeg executable file path. Leave blank to use system default.</div>
       </div>
       <div class="mb-3">
         <label for="ffprobe-dir-setting" class="form-label">FFprobe folder override</label>
-        <input id="ffprobe-dir-setting" class="form-control" type="text" placeholder="/opt/homebrew/bin" />
+        <input id="ffprobe-dir-setting" type="hidden" />
+        <select id="ffprobe-dir-picker" class="form-select">
+          <option value="" selected>Use system default</option>
+        </select>
+        <div class="form-text">Use “← Back ...” to move up folders.</div>
         <div class="form-text">Optional. Enter the folder containing ffprobe (for example: /opt/homebrew/bin). Do not enter the ffprobe executable file path. Leave blank to use system default.</div>
       </div>
       <div class="form-check mt-3">
@@ -105,19 +117,19 @@
       <form id="smoke-form" class="row g-3 align-items-end">
         <div class="col-md-2">
           <label for="smoke-count" class="form-label"># Files</label>
-          <input id="smoke-count" class="form-control" name="smokeCount" type="number" min="1" max="100" value="20" />
+          <input id="smoke-count" class="form-control" name="smokeCount" type="number" min="1" max="100" value="10" />
         </div>
         <div class="col-md-2">
           <label for="smoke-min-duration-sec" class="form-label">Min length</label>
           <div class="input-group">
-            <input id="smoke-min-duration-sec" class="form-control" name="smokeMinDurationSec" type="number" min="1" step="1" value="30" />
+            <input id="smoke-min-duration-sec" class="form-control" name="smokeMinDurationSec" type="number" min="1" step="1" value="4" />
             <span class="input-group-text">sec</span>
           </div>
         </div>
         <div class="col-md-2">
           <label for="smoke-max-duration-sec" class="form-label">Max length</label>
           <div class="input-group">
-            <input id="smoke-max-duration-sec" class="form-control" name="smokeMaxDurationSec" type="number" min="1" step="1" value="120" />
+            <input id="smoke-max-duration-sec" class="form-control" name="smokeMaxDurationSec" type="number" min="1" step="1" value="60" />
             <span class="input-group-text">sec</span>
           </div>
         </div>
@@ -131,7 +143,7 @@
         <div class="col-md-2">
           <label for="smoke-max-bitrate-kbps" class="form-label">Max bitrate</label>
           <div class="input-group">
-            <input id="smoke-max-bitrate-kbps" class="form-control" name="smokeMaxBitrateKbps" type="number" min="300" max="100000" step="100" value="9000" />
+            <input id="smoke-max-bitrate-kbps" class="form-control" name="smokeMaxBitrateKbps" type="number" min="300" max="100000" step="100" value="15000" />
             <span class="input-group-text">k</span>
           </div>
         </div>
@@ -146,8 +158,12 @@
         <div class="col-md-2">
           <button id="smoke-btn" class="btn btn-secondary" type="submit">Generate Smoke Test</button>
         </div>
-        <div class="col-12">
+        <div class="col-12 d-flex align-items-center gap-3">
           <button id="smoke-advanced-toggle" class="btn btn-sm btn-outline-secondary" type="button">Advanced</button>
+          <div class="form-check m-0">
+            <input class="form-check-input" type="checkbox" id="smoke-use-gpu-only" />
+            <label class="form-check-label" for="smoke-use-gpu-only">Use GPU codecs only</label>
+          </div>
         </div>
         <div id="smoke-advanced-section" class="col-12 d-none">
           <div class="border rounded p-3">
@@ -179,6 +195,30 @@
       </div>
     </div>
   </div>
+
+  <div class="d-flex justify-content-end mb-2">
+    <button id="reset-defaults-btn" class="btn btn-outline-danger" type="button">Reset Entire App to Defaults</button>
+  </div>
 </main>
+
+<div class="modal fade" id="resetDefaultsConfirmModal" tabindex="-1" aria-labelledby="resetDefaultsConfirmModalLabel" aria-hidden="true">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h5 class="modal-title" id="resetDefaultsConfirmModalLabel">Reset Entire App?</h5>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+      </div>
+      <div class="modal-body">
+        <div class="alert alert-warning mb-0" role="alert">
+          This will clear saved app settings, cached scan results, smoke settings, and tool path overrides.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button type="button" id="confirm-reset-defaults-btn" class="btn btn-danger">Yes, Reset Everything</button>
+      </div>
+    </div>
+  </div>
+</div>
 
 <script type="module" src="/js/settings.js"></script>

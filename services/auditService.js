@@ -42,7 +42,7 @@ export function buildAuditInput(body = {}) {
     scanExtensions: body.scanExtensions || '',
     videoCodec: body.videoCodec || '',
     videoBitrate: body.videoBitrate || '',
-    videoBitrateOp: body.videoBitrateOp || '>=',
+    videoBitrateOp: body.videoBitrateOp || '=',
     videoBitrateTolerancePct: body.videoBitrateTolerancePct ?? '10',
     audioCodec: body.audioCodec || '',
     audioChannels: body.audioChannels || '',
@@ -51,7 +51,7 @@ export function buildAuditInput(body = {}) {
 }
 
 export function buildCriteria(input) {
-  const videoBitrateOp = normalizeOperator(input.videoBitrateOp, '>=');
+  const videoBitrateOp = normalizeOperator(input.videoBitrateOp, '=');
   const audioChannelsOp = normalizeOperator(input.audioChannelsOp, '>=');
 
   const criteria = {

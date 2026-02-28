@@ -38,21 +38,28 @@ app.use('/api/stats', statsRoutes);
 
 app.get('/', (_req, res) => {
   res.render('index', {
-    title: 'Video Encoding Audit',
+    title: 'HarryHax Transcoder',
     activeAudit: true
   });
 });
 
 app.get('/settings', (_req, res) => {
   res.render('settings', {
-    title: 'Settings - Video Encoding Audit',
+    title: 'Settings - HarryHax Transcoder',
     activeSettings: true
+  });
+});
+
+app.get('/about', (_req, res) => {
+  res.render('about', {
+    title: 'About - HarryHax Transcoder',
+    activeAbout: true
   });
 });
 
 app.get('/readme', (_req, res) => {
   res.render('readme', {
-    title: 'README - Video Encoding Audit',
+    title: 'README - HarryHax Transcoder',
     activeReadme: true
   });
 });

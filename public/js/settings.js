@@ -1,20 +1,66 @@
 const CODEC_VISIBILITY_KEY = 'codecVisibilityMode';
 const AUDIT_SETTINGS_KEY = 'auditFormSettings';
 const SMOKE_SETTINGS_KEY = 'smokeGeneratorSettings';
+const LAST_SCAN_RESULTS_KEY = 'lastAuditScanResults';
 const DEFAULT_SCAN_EXTENSIONS = '.mp4,.mkv,.mov,.avi,.wmv,.flv,.webm,.m4v,.mpg,.mpeg,.ts';
 
 const showCommonCodecsCheckbox = document.getElementById('show-common-codecs');
 const codecSettingStatus = document.getElementById('codec-setting-status');
 const transcodeLocationSetting = document.getElementById('transcode-location-setting');
+const transcodeLocationPicker = document.getElementById('transcode-location-picker');
 const ffmpegDirSetting = document.getElementById('ffmpeg-dir-setting');
+const ffmpegDirPicker = document.getElementById('ffmpeg-dir-picker');
 const ffprobeDirSetting = document.getElementById('ffprobe-dir-setting');
+const ffprobeDirPicker = document.getElementById('ffprobe-dir-picker');
 const videoBitrateToleranceSetting = document.getElementById('video-bitrate-tolerance-setting');
 const scanExtensionsSetting = document.getElementById('scan-extensions-setting');
 const pauseBatteryPctSetting = document.getElementById('pause-battery-pct-setting');
 const startBatteryPctSetting = document.getElementById('start-battery-pct-setting');
 const saveTranscodeLogSetting = document.getElementById('save-transcode-log-setting');
+const resetDefaultsBtn = document.getElementById('reset-defaults-btn');
 const advancedSettingStatus = document.getElementById('advanced-setting-status');
 let toolPathSaveTimeout = null;
+
+async function loadDirectoryPicker(valueInput, picker, {
+  emptyLabel = '',
+  maxDepth = 1
+} = {}) {
+  if (!valueInput || !picker) {
+    return;
+  }
+
+  const currentValue = String(valueInput.value || '').trim();
+  const base = currentValue || '.';
+  const query = new URLSearchParams({ base, maxDepth: String(maxDepth) });
+  const response = await fetch(`/api/options/directories?${query.toString()}`);
+  const data = await response.json();
+  if (!response.ok || !data?.ok) {
+    throw new Error(data?.error || 'Unable to load directories.');
+  }
+
+  const options = [];
+
+  if (emptyLabel) {
+    const selected = currentValue ? '' : ' selected';
+    options.push(`<option value=""${selected}>${escapeHtml(emptyLabel)}</option>`);
+  }
+
+  if (typeof data.parent === 'string' && data.parent) {
+    options.push(`<option value="${escapeHtml(data.parent)}">← Back ...</option>`);
+  }
+
+  const discoveredDirs = Array.isArray(data.directories) ? data.directories : [];
+  if (currentValue && !discoveredDirs.includes(currentValue)) {
+    options.push(`<option value="${escapeHtml(currentValue)}" selected>${escapeHtml(currentValue)}</option>`);
+  }
+
+  for (const dir of discoveredDirs) {
+    const selected = dir === currentValue ? ' selected' : '';
+    options.push(`<option value="${escapeHtml(dir)}"${selected}>${escapeHtml(dir)}</option>`);
+  }
+
+  picker.innerHTML = options.join('');
+}
 
 function normalizeScanExtensionsInput(value) {
   const parts = String(value || '')
@@ -75,6 +121,25 @@ async function saveToolPathsToServer() {
   return data.toolPaths || {};
 }
 
+async function resetToolPathsToDefaults() {
+  const response = await fetch('/api/options/tool-paths', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ffmpegDir: '', ffprobeDir: '' })
+  });
+  const data = await response.json();
+  if (!response.ok || !data?.ok) {
+    throw new Error(data?.error || 'Unable to reset ffmpeg/ffprobe folder settings.');
+  }
+}
+
+function clearAppLocalSettings() {
+  globalThis.localStorage?.removeItem(CODEC_VISIBILITY_KEY);
+  globalThis.localStorage?.removeItem(AUDIT_SETTINGS_KEY);
+  globalThis.localStorage?.removeItem(SMOKE_SETTINGS_KEY);
+  globalThis.localStorage?.removeItem(LAST_SCAN_RESULTS_KEY);
+}
+
 function scheduleToolPathSave() {
   if (toolPathSaveTimeout) {
     clearTimeout(toolPathSaveTimeout);
@@ -96,6 +161,23 @@ function scheduleToolPathSave() {
   }, 300);
 }
 
+if (resetDefaultsBtn) {
+  resetDefaultsBtn.addEventListener('click', async () => {
+    resetDefaultsBtn.disabled = true;
+    try {
+      await resetToolPathsToDefaults();
+      clearAppLocalSettings();
+      renderAdvancedSettingStatus('Defaults restored for the entire application. Reloading...');
+      globalThis.setTimeout(() => {
+        globalThis.location.reload();
+      }, 150);
+    } catch (error) {
+      renderAdvancedSettingStatus(`Failed to reset defaults: ${error.message}`);
+      resetDefaultsBtn.disabled = false;
+    }
+  });
+}
+
 function getCodecVisibilityMode() {
   return globalThis.localStorage?.getItem(CODEC_VISIBILITY_KEY) || 'all';
 }
@@ -110,8 +192,8 @@ function renderCodecSettingStatus(isCommonOnly) {
   }
 
   codecSettingStatus.textContent = isCommonOnly
-    ? 'Audit page will show the top 10 most common codecs.'
-    : 'Audit page will show all available codecs.';
+    ? 'Home page will show the top 10 most common codecs.'
+    : 'Home page will show all available codecs.';
 }
 
 if (showCommonCodecsCheckbox) {
@@ -130,10 +212,23 @@ if (showCommonCodecsCheckbox) {
   const saved = loadAuditSettings();
   if (transcodeLocationSetting) {
     transcodeLocationSetting.value = typeof saved.transcodeLocation === 'string' ? saved.transcodeLocation : '';
-    transcodeLocationSetting.addEventListener('input', () => {
-      saveAuditSettingsPatch({ transcodeLocation: transcodeLocationSetting.value.trim() });
-      renderAdvancedSettingStatus();
-    });
+    if (transcodeLocationPicker) {
+      loadDirectoryPicker(transcodeLocationSetting, transcodeLocationPicker, { emptyLabel: 'Not set (optional)', maxDepth: 1 })
+        .catch((error) => {
+          renderAdvancedSettingStatus(`Failed to load transcode folders: ${error.message}`);
+        });
+
+      transcodeLocationPicker.addEventListener('change', async () => {
+        transcodeLocationSetting.value = transcodeLocationPicker.value || '';
+        saveAuditSettingsPatch({ transcodeLocation: transcodeLocationSetting.value.trim() });
+        renderAdvancedSettingStatus();
+        try {
+          await loadDirectoryPicker(transcodeLocationSetting, transcodeLocationPicker, { emptyLabel: 'Not set (optional)', maxDepth: 1 });
+        } catch (error) {
+          renderAdvancedSettingStatus(`Failed to load transcode folders: ${error.message}`);
+        }
+      });
+    }
   }
 
   if (videoBitrateToleranceSetting) {
@@ -212,11 +307,41 @@ if (showCommonCodecsCheckbox) {
       .then((toolPaths) => {
         if (ffmpegDirSetting) {
           ffmpegDirSetting.value = typeof toolPaths.ffmpegDir === 'string' ? toolPaths.ffmpegDir : '';
-          ffmpegDirSetting.addEventListener('input', scheduleToolPathSave);
+          if (ffmpegDirPicker) {
+            loadDirectoryPicker(ffmpegDirSetting, ffmpegDirPicker, { emptyLabel: 'Use system default', maxDepth: 1 })
+              .catch((error) => {
+                renderAdvancedSettingStatus(`Failed to load ffmpeg folders: ${error.message}`);
+              });
+
+            ffmpegDirPicker.addEventListener('change', async () => {
+              ffmpegDirSetting.value = ffmpegDirPicker.value || '';
+              scheduleToolPathSave();
+              try {
+                await loadDirectoryPicker(ffmpegDirSetting, ffmpegDirPicker, { emptyLabel: 'Use system default', maxDepth: 1 });
+              } catch (error) {
+                renderAdvancedSettingStatus(`Failed to load ffmpeg folders: ${error.message}`);
+              }
+            });
+          }
         }
         if (ffprobeDirSetting) {
           ffprobeDirSetting.value = typeof toolPaths.ffprobeDir === 'string' ? toolPaths.ffprobeDir : '';
-          ffprobeDirSetting.addEventListener('input', scheduleToolPathSave);
+          if (ffprobeDirPicker) {
+            loadDirectoryPicker(ffprobeDirSetting, ffprobeDirPicker, { emptyLabel: 'Use system default', maxDepth: 1 })
+              .catch((error) => {
+                renderAdvancedSettingStatus(`Failed to load ffprobe folders: ${error.message}`);
+              });
+
+            ffprobeDirPicker.addEventListener('change', async () => {
+              ffprobeDirSetting.value = ffprobeDirPicker.value || '';
+              scheduleToolPathSave();
+              try {
+                await loadDirectoryPicker(ffprobeDirSetting, ffprobeDirPicker, { emptyLabel: 'Use system default', maxDepth: 1 });
+              } catch (error) {
+                renderAdvancedSettingStatus(`Failed to load ffprobe folders: ${error.message}`);
+              }
+            });
+          }
         }
       })
       .catch((error) => {
@@ -235,6 +360,7 @@ const smokeMaxDurationSecInput = document.getElementById('smoke-max-duration-sec
 const smokeMinBitrateKbpsInput = document.getElementById('smoke-min-bitrate-kbps');
 const smokeMaxBitrateKbpsInput = document.getElementById('smoke-max-bitrate-kbps');
 const smokeAdvancedToggle = document.getElementById('smoke-advanced-toggle');
+const smokeUseGpuOnlyCheckbox = document.getElementById('smoke-use-gpu-only');
 const smokeAdvancedSection = document.getElementById('smoke-advanced-section');
 const smokeCodecCheckboxes = document.getElementById('smoke-codec-checkboxes');
 const smokeCodecsSelectGpuBtn = document.getElementById('smoke-codecs-select-gpu');
@@ -327,6 +453,23 @@ function selectGpuCodecsInList() {
 
   checkboxes.forEach((checkbox) => {
     checkbox.checked = isGpuCodec(checkbox.value);
+  });
+  saveSmokeSettingsPatch({ selectedVideoCodecs: getSelectedSmokeVideoCodecs() });
+  updateSmokeCodecsSelectAllButtonState();
+}
+
+function selectAllCodecsInList() {
+  if (!smokeCodecCheckboxes) {
+    return;
+  }
+
+  const checkboxes = Array.from(smokeCodecCheckboxes.querySelectorAll('.smoke-codec-checkbox'));
+  if (!checkboxes.length) {
+    return;
+  }
+
+  checkboxes.forEach((checkbox) => {
+    checkbox.checked = true;
   });
   saveSmokeSettingsPatch({ selectedVideoCodecs: getSelectedSmokeVideoCodecs() });
   updateSmokeCodecsSelectAllButtonState();
@@ -509,15 +652,23 @@ async function refreshSmokeGpuCodecStatus() {
     availableSmokeVideoCodecs = videoCodecs;
     const smokeSaved = loadSmokeSettings();
     const hasSavedSelection = Object.prototype.hasOwnProperty.call(smokeSaved, 'selectedVideoCodecs');
+    const useGpuCodecsOnly = smokeSaved.useGpuCodecsOnly === true;
     const selectedCodecs = hasSavedSelection
       ? (Array.isArray(smokeSaved.selectedVideoCodecs) ? smokeSaved.selectedVideoCodecs : [])
-      : getDefaultMostCommonCodecs(availableSmokeVideoCodecs);
+      : availableSmokeVideoCodecs;
 
     if (!hasSavedSelection) {
       saveSmokeSettingsPatch({ selectedVideoCodecs: selectedCodecs });
     }
 
     renderSmokeCodecCheckboxes(availableSmokeVideoCodecs, selectedCodecs);
+
+    if (smokeUseGpuOnlyCheckbox) {
+      smokeUseGpuOnlyCheckbox.checked = useGpuCodecsOnly;
+      if (useGpuCodecsOnly) {
+        selectGpuCodecsInList();
+      }
+    }
 
     const gpuCodecs = videoCodecs.filter((codec) => isGpuCodec(codec));
     if (!gpuCodecs.length) {
@@ -611,8 +762,8 @@ function saveSmokeSettingsPatch(patch) {
 function normalizeSmokeDurationRange(minRaw, maxRaw) {
   const parsedMin = Number.parseFloat(String(minRaw ?? ''));
   const parsedMax = Number.parseFloat(String(maxRaw ?? ''));
-  let min = Number.isFinite(parsedMin) ? parsedMin : 30;
-  let max = Number.isFinite(parsedMax) ? parsedMax : 120;
+  let min = Number.isFinite(parsedMin) ? parsedMin : 4;
+  let max = Number.isFinite(parsedMax) ? parsedMax : 60;
   min = Math.max(1, min);
   max = Math.max(1, max);
   if (min > max) {
@@ -625,7 +776,7 @@ function normalizeSmokeBitrateRange(minRaw, maxRaw) {
   const parsedMin = Number.parseInt(String(minRaw ?? ''), 10);
   const parsedMax = Number.parseInt(String(maxRaw ?? ''), 10);
   let min = Number.isFinite(parsedMin) ? parsedMin : 2500;
-  let max = Number.isFinite(parsedMax) ? parsedMax : 9000;
+  let max = Number.isFinite(parsedMax) ? parsedMax : 15000;
   min = Math.max(300, Math.min(100000, min));
   max = Math.max(300, Math.min(100000, max));
   if (min > max) {
@@ -637,7 +788,7 @@ function normalizeSmokeBitrateRange(minRaw, maxRaw) {
 {
   const smokeSaved = loadSmokeSettings();
   if (smokeCountInput) {
-    smokeCountInput.value = String(smokeSaved.count ?? 20);
+    smokeCountInput.value = String(smokeSaved.count ?? 10);
     smokeCountInput.addEventListener('input', () => {
       saveSmokeSettingsPatch({ count: smokeCountInput.value });
     });
@@ -646,8 +797,8 @@ function normalizeSmokeBitrateRange(minRaw, maxRaw) {
   if (smokeMinDurationSecInput && smokeMaxDurationSecInput) {
     const savedMinDuration = smokeSaved.minDurationSec ?? smokeSaved.minDurationMin ?? smokeSaved.minSizeMb;
     const savedMaxDuration = smokeSaved.maxDurationSec ?? smokeSaved.maxDurationMin ?? smokeSaved.maxSizeMb;
-    smokeMinDurationSecInput.value = String(savedMinDuration ?? 30);
-    smokeMaxDurationSecInput.value = String(savedMaxDuration ?? 120);
+    smokeMinDurationSecInput.value = String(savedMinDuration ?? 4);
+    smokeMaxDurationSecInput.value = String(savedMaxDuration ?? 60);
 
     const persistRange = () => {
       saveSmokeSettingsPatch({
@@ -662,7 +813,7 @@ function normalizeSmokeBitrateRange(minRaw, maxRaw) {
 
   if (smokeMinBitrateKbpsInput && smokeMaxBitrateKbpsInput) {
     smokeMinBitrateKbpsInput.value = String(smokeSaved.minBitrateKbps ?? 2500);
-    smokeMaxBitrateKbpsInput.value = String(smokeSaved.maxBitrateKbps ?? 9000);
+    smokeMaxBitrateKbpsInput.value = String(smokeSaved.maxBitrateKbps ?? 15000);
 
     const persistBitrateRange = () => {
       saveSmokeSettingsPatch({
@@ -689,6 +840,19 @@ function normalizeSmokeBitrateRange(minRaw, maxRaw) {
       saveSmokeSettingsPatch({ showAdvancedSmokeOptions: nextVisible });
     });
   }
+
+  if (smokeUseGpuOnlyCheckbox) {
+    smokeUseGpuOnlyCheckbox.checked = smokeSaved.useGpuCodecsOnly === true;
+    smokeUseGpuOnlyCheckbox.addEventListener('change', () => {
+      const enabled = smokeUseGpuOnlyCheckbox.checked;
+      saveSmokeSettingsPatch({ useGpuCodecsOnly: enabled });
+      if (enabled) {
+        selectGpuCodecsInList();
+      } else {
+        selectAllCodecsInList();
+      }
+    });
+  }
 }
 
 if (smokeForm && smokeBtn && smokeStatus) {
@@ -703,17 +867,17 @@ if (smokeForm && smokeBtn && smokeStatus) {
     startSmokeOutputWindow();
 
     const formData = new FormData(smokeForm);
-    const smokeCount = Number.parseInt(formData.get('smokeCount') || '20', 10);
+    const smokeCount = Number.parseInt(formData.get('smokeCount') || '10', 10);
     const smokeMode = formData.get('smokeMode') || 'random';
     const durationRange = normalizeSmokeDurationRange(
-      formData.get('smokeMinDurationSec') || 30,
-      formData.get('smokeMaxDurationSec') || 120
+      formData.get('smokeMinDurationSec') || 4,
+      formData.get('smokeMaxDurationSec') || 60
     );
     const bitrateRange = normalizeSmokeBitrateRange(
       formData.get('smokeMinBitrateKbps') || 2500,
-      formData.get('smokeMaxBitrateKbps') || 9000
+      formData.get('smokeMaxBitrateKbps') || 15000
     );
-    const useGpuCodecsOnly = false;
+    const useGpuCodecsOnly = smokeUseGpuOnlyCheckbox?.checked === true;
     const selectedVideoCodecs = getSelectedSmokeVideoCodecs();
 
     const enteredMinDuration = smokeMinDurationSecInput?.value ?? durationRange.min;
