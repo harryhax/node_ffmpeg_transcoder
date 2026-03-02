@@ -253,9 +253,7 @@ const transcode = async (req, res) => {
       if (safeTranscodeLocation) {
         const fileName = path.basename(file);
         tempInput = path.join(safeTranscodeLocation, fileName);
-        broadcastTranscodeEvent("status", `Copying to temporary folder: ${fileName}`);
         await fs.copyFile(file, tempInput);
-        broadcastTranscodeEvent("status", `Ready to transcode: ${fileName}`);
         workingInput = tempInput;
         tempOutput = buildOutputPath(tempInput, { videoCodec, audioCodec });
         workingOutput = tempOutput;

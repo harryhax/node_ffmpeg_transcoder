@@ -1,29 +1,27 @@
-# Packaging (pkg)
+# Packaging for Idiot-Proof Distribution
 
-This project can be packaged into standalone executables so users do not need Node.js installed.
+To make this Node.js project run on Windows, Linux, and macOS without requiring users to install Node.js separately, you can package it as a standalone executable using tools like:
 
-## GitHub Actions Release (Recommended)
+- **pkg** (https://github.com/vercel/pkg): Packages Node.js apps into executables for all platforms.
+- **nexe** (https://github.com/nexe/nexe): Similar, builds a single binary.
 
-The easiest way to create a release is via GitHub Actions:
+## How to Package
 
-1. Update `version` in `package.json` to match your next release (e.g., `1.0.1`)
-2. Commit and push the version bump
-3. Create and push a git tag:
+1. Install pkg globally:
    ```bash
-   git tag v1.0.1
-   git push origin v1.0.1
+   npm install -g pkg
    ```
-4. GitHub Actions automatically builds and publishes versioned zips for:
-   - macOS (Intel + Apple Silicon)
-   - Linux x64
-   - Windows x64
 
-The workflow validates that the git tag matches `package.json` version before publishing.
+2. Build executables for all platforms:
+   ```bash
+   pkg . --targets node18-win-x64,node18-macos-x64,node18-linux-x64
+   ```
 
-You can also trigger a test build manually from the GitHub Actions tab without creating a release.
+3. Distribute the resulting .exe, .app, or binary files. Users just run the file—no Node.js install needed!
 
-## Runtime Notes
+## Notes
+- ffmpeg and ffprobe must still be installed separately (not bundled).
+- For full automation, add ffmpeg binaries or check for them in your installer.
 
-- `ffmpeg` and `ffprobe` are still required on the user machine.
-- The app's `views/`, `public/`, and `README.md` are included in the packaged executable.
-- Users run the generated binary directly; no Node.js install is required.
+---
+See pkg or nexe docs for advanced options.
