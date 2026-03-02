@@ -13,14 +13,6 @@ Transcode Plex/media libraries with a simple web UI. The project audits files ag
 
 ![Home (Simple)](docs/screenshots/home_simple.png)
 
-### Home
-
-![Home](docs/screenshots/home.png)
-
-### Settings
-
-![Settings](docs/screenshots/settings.png)
-
 ## Run server.js directly (Node + FFmpeg already installed)
 
 If you already have Node.js and ffmpeg/ffprobe installed:
