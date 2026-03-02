@@ -133,6 +133,7 @@ const selectAllCheckbox = document.getElementById('select-all-checkbox');
 const transcodeSettingsToggle = document.getElementById('transcode-settings-toggle');
 const transcodeSettingsCollapse = document.getElementById('transcode-settings-collapse');
 const ffmpegWarning = document.getElementById('ffmpeg-warning');
+const versionWarning = document.getElementById('version-warning');
 const savedNet = document.getElementById('saved-net');
 const savedSource = document.getElementById('saved-source');
 const savedFiles = document.getElementById('saved-files');
@@ -480,6 +481,46 @@ async function refreshToolHealthWarning() {
   } catch (error) {
     ffmpegWarning.classList.remove('d-none');
     ffmpegWarning.innerHTML = buildMissingToolsErrorHtml(['ffmpeg', 'ffprobe']);
+  }
+}
+
+function hideVersionWarning() {
+  if (!versionWarning) {
+    return;
+  }
+  versionWarning.classList.add('d-none');
+  versionWarning.textContent = '';
+}
+
+async function refreshVersionWarning() {
+  if (!versionWarning) {
+    return;
+  }
+
+  try {
+    const data = await fetchJsonOrThrow('/api/version', undefined, 'Unable to check app version.');
+    if (data?.updateAvailable !== true) {
+      hideVersionWarning();
+      return;
+    }
+
+    const currentVersion = String(data.currentVersion || '').trim() || 'unknown';
+    const latestVersion = String(data.latestVersion || '').trim() || 'unknown';
+    const githubUrl = typeof data.githubUrl === 'string' && data.githubUrl
+      ? data.githubUrl
+      : 'https://github.com';
+
+    versionWarning.classList.remove('d-none');
+    versionWarning.textContent = `Update available: v${latestVersion} is newer than your v${currentVersion}.`;
+
+    const anchor = document.createElement('a');
+    anchor.href = githubUrl;
+    anchor.target = '_blank';
+    anchor.rel = 'noopener noreferrer';
+    anchor.textContent = ' Pull latest from GitHub.';
+    versionWarning.append(anchor);
+  } catch {
+    hideVersionWarning();
   }
 }
 
@@ -1076,6 +1117,7 @@ async function syncCodecDropdowns() {
 (async () => {
   try {
     await refreshToolHealthWarning();
+    await refreshVersionWarning();
     const savedSettings = loadSavedAuditSettings();
     applySavedAuditSettings(savedSettings);
     if (rootInput && (!rootInput.value || !String(rootInput.value).trim())) {
