@@ -10,6 +10,7 @@
     "server:no-sleep": "caffeinate -dimsu node server.js"
   },
   "dependencies": {
+    "common-es": "^1.1.0",
     "express": "^4.21.2",
     "express-handlebars": "^8.0.6"
   },

@@ -5,3 +5,6 @@ transcode-work/
 dist/
 build/
 package-lock.json
+.DS_Store
+*.bundle.cjs
+*.bundle.mjs

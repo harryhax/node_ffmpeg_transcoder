@@ -66,7 +66,7 @@ npm run smoke-test -- --out ./smoke-fixtures
 
 ## Packaging
 
-See [PACKAGING.md](PACKAGING.md) for distribution options.
+Packaging is on hold for now. Current supported usage is to clone the repo and run it as a standard Node.js project.
 
 ## Project Structure
 
