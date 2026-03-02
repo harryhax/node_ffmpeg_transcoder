@@ -98,6 +98,12 @@ npm run smoke-test -- --out ./smoke-fixtures
 
 Packaging is on hold for now. Current supported usage is to clone the repo and run it as a standard Node.js project.
 
+## License and Liability
+
+This project is licensed under the MIT License. See [LICENSE](LICENSE).
+
+It is provided "AS IS", without warranty of any kind, and the author is not liable for any claim, damages, or other liability arising from use of this software.
+
 ## Project Structure
 
 - `server.js` — Express app and static hosting
