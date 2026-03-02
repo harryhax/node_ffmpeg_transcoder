@@ -4,14 +4,21 @@
   "description": "Audit video encodings with FFprobe and generate smoke-test sample media.",
   "type": "module",
   "scripts": {
-    "check": "node --check services/audit/auditCore.js && node --check cli/smoke-test.js && node --check workers/auditWorker.js && node --check services/audit/auditService.js && node --check services/options/optionsService.js && node --check services/transcode/transcodeRunner.js && node --check controllers/audit/auditController.js && node --check controllers/options/optionsController.js && node --check controllers/smokeTestController.js && node --check controllers/statsController.js && node --check controllers/transcode/transcodeController.js && node --check routes/audit/audit.js && node --check routes/options/options.js && node --check routes/smokeTest.js && node --check routes/stats.js && node --check routes/transcode/transcode.js && node --check public/js/app.js && node --check public/js/settings.js && node --check public/js/readme.js && node --check server.js",
+    "check": "node --check services/audit/auditCore.js && node --check cli/smoke-test.js && node --check workers/auditWorker.js && node --check services/audit/auditService.js && node --check services/options/optionsService.js && node --check services/transcode/transcodeRunner.js && node --check controllers/audit/auditController.js && node --check controllers/options/optionsController.js && node --check controllers/smokeTestController.js && node --check controllers/statsController.js && node --check controllers/transcode/transcodeController.js && node --check routes/audit/audit.js && node --check routes/options/options.js && node --check routes/smokeTest.js && node --check routes/stats.js && node --check routes/transcode/transcode.js && node --check public/js/app.js && node --check public/js/settings.js && node --check public/js/readme.js && node --check index.js && node --check launcher.cjs",
     "smoke-test": "node cli/smoke-test.js",
-    "server": "node server.js",
-    "server:no-sleep": "caffeinate -dimsu node server.js"
+    "server": "node index.js",
+    "server:no-sleep": "caffeinate -dimsu node index.js",
+    "build:sea": "node scripts/build-sea.mjs --zip",
+    "build:sea:host": "node scripts/build-sea.mjs --zip",
+    "build:pkg": "npm run build:sea",
+    "build:pkg:host": "npm run build:sea:host"
   },
   "dependencies": {
     "express": "^4.21.2",
     "express-handlebars": "^8.0.6"
+  },
+  "devDependencies": {
+    "postject": "^1.0.0-alpha.6"
   },
   "engines": {
     "node": ">=18"

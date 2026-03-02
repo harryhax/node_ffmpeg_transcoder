@@ -1,6 +1,6 @@
 {
   "watch": [
-    "server.js",
+    "index.js",
     "controllers",
     "routes",
     "services",
