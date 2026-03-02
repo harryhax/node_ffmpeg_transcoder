@@ -21,10 +21,8 @@ jobs:
             osname: linux-x64
           - os: windows-latest
             osname: win-x64
-          - os: macos-13
-            osname: macos-x64
-          - os: macos-14
-            osname: macos-arm64
+          - os: macos-latest
+            osname: macos
 
     steps:
       - name: Checkout
