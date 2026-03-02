@@ -2,6 +2,22 @@
 
 Transcode Plex/media libraries with a simple web UI. The project audits files against codec/bitrate/channel rules, then batch transcodes selected files while streaming live progress.
 
+## Run server.js directly (Node + FFmpeg already installed)
+
+If you already have Node.js and ffmpeg/ffprobe installed:
+
+1. Clone this repository.
+2. Open a terminal in the project folder.
+3. Install dependencies:
+   ```bash
+   npm install
+   ```
+4. Start the server:
+   ```bash
+   node server.js
+   ```
+5. Open http://localhost:3000.
+
 ## Super Simple Setup
 
 1. Download or clone this project.
@@ -11,6 +27,14 @@ Transcode Plex/media libraries with a simple web UI. The project audits files ag
    ./install.sh
    ```
 4. Follow the prompts, then open http://localhost:3000.
+
+### Windows setup
+
+Run this in PowerShell from the project folder:
+
+```powershell
+.\install.ps1
+```
 
 ## Requirements
 
