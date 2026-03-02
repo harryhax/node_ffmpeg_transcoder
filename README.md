@@ -1,5 +1,11 @@
 # Plex Video Transcoder & Auditor
 
+[![Version](https://img.shields.io/github/package-json/v/harryhax/node_ffmpeg_transcoder?label=Version)](https://github.com/harryhax/node_ffmpeg_transcoder)
+[![License](https://img.shields.io/github/license/harryhax/node_ffmpeg_transcoder)](https://github.com/harryhax/node_ffmpeg_transcoder/blob/main/LICENSE)
+[![Stars](https://img.shields.io/github/stars/harryhax/node_ffmpeg_transcoder?style=social)](https://github.com/harryhax/node_ffmpeg_transcoder/stargazers)
+[![Last Commit](https://img.shields.io/github/last-commit/harryhax/node_ffmpeg_transcoder)](https://github.com/harryhax/node_ffmpeg_transcoder/commits/main)
+[![Discord](https://img.shields.io/badge/Discord-Join%20Chat-5865F2?logo=discord&logoColor=white)](https://discord.gg/HMCNq2bEE5)
+
 Transcode Plex/media libraries with a simple web UI. The project audits files against codec/bitrate/channel rules, then batch transcodes selected files while streaming live progress.
 
 ## Run server.js directly (Node + FFmpeg already installed)
