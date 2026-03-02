@@ -13,7 +13,7 @@
     "README.md",
     "PACKAGING.md",
     "RELEASE.md",
-    "install.sh",
+    "install/install.sh",
     "*.log",
     ".git/**",
     "node_modules/**"

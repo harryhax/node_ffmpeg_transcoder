@@ -1,6 +1,6 @@
 #!/bin/bash
 # Simple installer for Video Encoding Auditor & Plex Transcoder
-# Usage: ./install.sh
+# Usage: ./install/install.sh
 
 set -e
 

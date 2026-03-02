@@ -30,7 +30,7 @@ If you already have Node.js and ffmpeg/ffprobe installed:
 2. Open a terminal in the project folder.
 3. Run:
    ```bash
-   ./install.sh
+   ./install/install.sh
    ```
 4. Follow the prompts, then open http://localhost:3000.
 
@@ -39,7 +39,7 @@ If you already have Node.js and ffmpeg/ffprobe installed:
 Run this in PowerShell from the project folder:
 
 ```powershell
-.\install.ps1
+.\install\install.ps1
 ```
 
 ## Requirements
@@ -101,6 +101,8 @@ Packaging is on hold for now. Current supported usage is to clone the repo and r
 ## License and Liability
 
 This project is licensed under the MIT License. See [LICENSE](LICENSE).
+
+Copyright (c) 2026 Harry Scanlan.
 
 It is provided "AS IS", without warranty of any kind, and the author is not liable for any claim, damages, or other liability arising from use of this software.
 
